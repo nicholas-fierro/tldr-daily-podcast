@@ -1,0 +1,7 @@
+anthropic
+google-genai
+trafilatura
+httpx
+beautifulsoup4
+boto3
+pytest

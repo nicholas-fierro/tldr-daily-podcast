@@ -1,0 +1,19 @@
+# secrets
+.env
+.env.*
+*.pem
+*-service-account.json
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# generated output
+out/
+episodes/
+*.mp3
+*.wav
+feed*.xml
+snapshots/
