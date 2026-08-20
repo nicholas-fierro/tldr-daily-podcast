@@ -1,0 +1,90 @@
+name: daily episode
+
+on:
+  schedule:
+    # UTC only, and Actions cron does not follow DST. These three land safely
+    # after TLDR's 6-7am ET publication window year-round. The freshness guard
+    # and the idempotency check mean only the first run that sees a fresh
+    # edition does any work — the other two exit 0 in seconds.
+    - cron: "15 11 * * 1-5"
+    - cron: "15 12 * * 1-5"
+    - cron: "15 13 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Edition date (YYYY-MM-DD). Blank = latest."
+        required: false
+      edition:
+        description: "TLDR edition slug"
+        required: false
+        default: tech
+      stage:
+        description: "Stop after this stage (fetch/parse/enrich/script/audio/publish)"
+        required: false
+        default: publish
+
+# Three overlapping triggers must never race each other into a double publish.
+concurrency:
+  group: daily-episode
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+        id: ffmpeg
+
+      - name: Run pipeline
+        id: run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          FEED_TOKEN: ${{ secrets.FEED_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python main.py \
+            --edition "${{ inputs.edition || 'tech' }}" \
+            --stage "${{ inputs.stage || 'publish' }}" \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
+            --verbose
+
+      # The snapshot is what you read when parsing breaks. Keep it even on
+      # failure — especially on failure.
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_id }}
+          path: |
+            out/*.html
+            out/*.script.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Alert on failure
+        if: failure() && env.ALERT_WEBHOOK_URL != ''
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          curl -sS -X POST "$ALERT_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n \
+              --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              '{text: ("TLDR podcast build failed: " + $run)}')"
