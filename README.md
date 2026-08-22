@@ -15,7 +15,7 @@ edition; stages needing API keys or publication remain written-but-unrun.
 |---|---|---|
 | M1 Parser | done | **verified live** — 14 items parsed, 3 sponsors dropped, real fixture committed |
 | M2 Enrichment | done | **verified live** — 12/14 enriched (85.7%); 2 clean blurb fallbacks, 0 items lost |
-| M3 Script | done | prompt + response parsing tested; **no episode has been read** |
+| M3 Script | done | **live candidate generated** — pending owner review |
 | M4 Audio | done | PCM math and ffmpeg argv tested; **ffmpeg never invoked, nothing listened to** |
 | M5 Publish | done | feed generation and retention tested; **never uploaded to R2** |
 | M6 Automate | done | workflows parse; **never run** |
@@ -30,6 +30,11 @@ the `mailto:` TLDR hiring item are excluded.
 14 items (85.7%). WSJ returned HTTP 401, and a Register page extracted a related-
 links listing instead of article text; both fell back to their TLDR blurbs with
 `enriched: false`. No item was dropped.
+
+**M3 candidate generated on 2026-08-22.** DeepSeek V3.2 produced a grounded
+1,142-word script across 7 segments for $0.007748. This is inside hard safety
+limits but below the preferred 1,200-1,600 range, so duration needs careful M4
+verification. Owner review remains the M3 checkpoint.
 
 ## Running it
 
@@ -51,7 +56,7 @@ freshness and idempotency guards, `--no-upload` skips R2 entirely, `--edition ai
 switches newsletters.
 
 ```bash
-pytest -q                                # 117 passing
+pytest -q                                # 119 passing
 ```
 
 ## Pipeline
@@ -89,7 +94,7 @@ win.
 | `FEED_TOKEN` | M5 | `openssl rand -hex 16` — self-generated |
 | `ALERT_WEBHOOK_URL` | M6 | Slack / Discord / ntfy |
 
-Script generation defaults to `qwen/qwen3-30b-a3b-instruct-2507` through
+Script generation defaults to `deepseek/deepseek-v3.2` through
 OpenRouter. Override it with `SCRIPT_MODEL`; structured JSON output is required.
 
 `R2_PUBLIC_BASE_URL` is not in the handoff's list. The RSS `<enclosure>` needs an
@@ -109,6 +114,5 @@ M1 and M2 need no credentials at all.
   rather than editing, so the check stays cheap.
 - Voice names (`Kore`, `Puck`) are likewise unverified — override with
   `TTS_VOICE_A` / `TTS_VOICE_B`.
-- Nobody has listened to an episode, so the prompt has never been iterated on.
-  Per the handoff, M3 is the step that decides whether this is worth listening
-  to; the prompt as committed is a first draft, not a tuned one.
+- The M3 script has not been voiced or heard. Its word-count gate is deliberately
+  soft because ffprobe duration at M4 is the real 8-12 minute requirement.

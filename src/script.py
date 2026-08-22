@@ -73,11 +73,15 @@ actually new versus what is a rerun of an older story.
 Hard requirements:
 
 LENGTH. {config.WORD_TARGET_MIN}-{config.WORD_TARGET_MAX} words total. Going long is a \
-failure, not a bonus — this has to land near ten minutes of audio. Cut material to fit.
+failure, not a bonus — this has to land near ten minutes of audio. Before writing, \
+silently budget {config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} coherent \
+segments and keep the total near the target. Do not output the budget.
 
-STRUCTURE. Group by theme, not by the newsletter's ordering. "Three things happened in \
-AI infrastructure today" is the goal; reading a list in order is the failure mode. \
-Sections in the input are a hint about topic, not a running order.
+STRUCTURE. Return {config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments, \
+grouped by theme rather than newsletter order. \
+Each story may appear in only one segment. The opening segment covers the biggest story \
+or one coherent theme; it must not preview stories that later segments repeat. Sections \
+in the input are topic hints, not a running order.
 
 WEIGHTING. Weight by substance. A major acquisition or a real technical result earns \
 60-90 seconds. A minor item earns one sentence. You are explicitly authorized to omit \
@@ -93,10 +97,14 @@ details on this one". Never invent specifics — numbers, names, dates, quotes, 
 mechanisms — that are not in the text you were given. This is the single most important \
 rule here. A hedged sentence is always better than a confident wrong one.
 
-VOICE. Real conversation: interruptions, short reactions, disagreement where honest. \
-Vary sentence length. No corporate register, no "in today's fast-moving landscape", no \
-rhetorical questions used as transitions. Never invent a listener email, a sponsor, or a \
-segment that does not exist. Do not read out URLs.
+EVIDENCE. Every factual claim must be supported by the supplied blurb or article text. \
+Do not turn a possibility into certainty, infer motives, invent causal explanations, or \
+add broad implications that the source does not support.
+
+VOICE. Real conversation: short reactions, follow-up questions, and disagreement where \
+honest. Vary sentence length. Avoid repetitive starts such as "And", "Right", and \
+"Exactly". No corporate register, no rhetorical questions used as transitions. Never \
+invent a listener email, a sponsor, or a segment that does not exist. Do not read URLs.
 
 FORMATTING. No stage directions, no [laughs], no sound or music cues, no emoji, no \
 markdown. Plain spoken sentences only — every character you write will be read aloud.
@@ -107,9 +115,9 @@ Return ONLY a JSON object, no prose around it, in exactly this shape:
 
 {{"segments": [{{"topic": "short-kebab-case-slug", "lines": [{{"speaker": "{config.HOST_A}", "text": "..."}}]}}]}}
 
-Each segment is one theme and should run 60-120 seconds of speech (roughly 150-300 \
-words) — segments are voiced separately and stitched, so they must stand alone without \
-mid-sentence handoffs. Aim for 5-8 segments. Speaker must be exactly \
+Return {config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments, usually \
+180-300 words each. Segments are voiced separately and stitched, so each must stand \
+alone without mid-sentence handoffs. Speaker must be exactly \
 "{config.HOST_A}" or "{config.HOST_B}"."""
 
 
@@ -118,7 +126,8 @@ SCRIPT_JSON_SCHEMA = {
     "properties": {
         "segments": {
             "type": "array",
-            "minItems": 1,
+            "minItems": config.SCRIPT_SEGMENT_MIN,
+            "maxItems": config.SCRIPT_SEGMENT_MAX,
             "items": {
                 "type": "object",
                 "properties": {
@@ -203,7 +212,7 @@ class OpenRouterScriptProvider:
                     "schema": SCRIPT_JSON_SCHEMA,
                 },
             },
-            "provider": {"require_parameters": True},
+            "provider": {"require_parameters": True, "sort": "throughput"},
             "plugins": [{"id": "response-healing"}],
         }
 
@@ -338,14 +347,18 @@ def generate_script(
     date: str,
     provider: ScriptProvider | None = None,
 ) -> Script:
-    """Generate one script, retrying API and malformed-output failures."""
+    """Generate one script, retrying API and unusable-output failures."""
     provider = provider or _default_script_provider()
     user_prompt = build_user_prompt(items, date)
+    retry_correction = ""
     last_error: Exception | None = None
 
     for attempt in range(1, config.SCRIPT_RETRIES + 2):
         try:
-            generation = provider.generate(SYSTEM_PROMPT, user_prompt)
+            generation = provider.generate(
+                SYSTEM_PROMPT,
+                retry_correction or user_prompt,
+            )
             if generation.cost_usd is None:
                 log.info(
                     "script model=%s tokens: in=%d out=%d",
@@ -364,19 +377,56 @@ def generate_script(
 
             episode_script = parse_script_json(generation.text, date)
             words = episode_script.word_count()
-            log.info(
-                "script: %d words across %d segments",
-                words,
-                len(episode_script.segments),
-            )
-            if not config.WORD_TARGET_MIN * 0.8 <= words <= config.WORD_TARGET_MAX * 1.2:
-                log.warning(
-                    "script is %d words, well outside the %d-%d target — episode duration "
-                    "will drift; consider tightening the prompt",
-                    words,
-                    config.WORD_TARGET_MIN,
-                    config.WORD_TARGET_MAX,
+            segment_count = len(episode_script.segments)
+            log.info("script: %d words across %d segments", words, segment_count)
+
+            valid_length = config.WORD_HARD_MIN <= words <= config.WORD_HARD_MAX
+            valid_segments = config.SCRIPT_SEGMENT_MIN <= segment_count <= config.SCRIPT_SEGMENT_MAX
+            if not valid_length or not valid_segments:
+                target_words = (config.WORD_TARGET_MIN + config.WORD_TARGET_MAX) // 2
+                word_delta = target_words - words
+                direction = (
+                    f"Add approximately {word_delta} words using only supplied facts."
+                    if word_delta > 0
+                    else f"Cut approximately {-word_delta} words without losing key facts."
                 )
+                retry_correction = (
+                    "Revise the previous podcast JSON below. Use only facts already "
+                    "present in it; do not introduce new claims. Preserve its strongest "
+                    "material while fixing length and structure. "
+                    f"It had {words} words across {segment_count} segments. {direction} "
+                    f"Return {config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} "
+                    f"non-overlapping segments and {config.WORD_TARGET_MIN}-"
+                    f"{config.WORD_TARGET_MAX} words total. Do not repeat a story in "
+                    "multiple segments. Return only corrected JSON.\n\n"
+                    f"PREVIOUS JSON:\n{generation.text}"
+                )
+                raise ScriptError(
+                    f"script was {words} words across {segment_count} segments; hard limits "
+                    f"are {config.WORD_HARD_MIN}-{config.WORD_HARD_MAX} words and "
+                    f"{config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments"
+                )
+
+            if not config.WORD_TARGET_MIN <= words <= config.WORD_TARGET_MAX:
+                if config.WORD_ACCEPT_MIN <= words <= config.WORD_ACCEPT_MAX:
+                    log.warning(
+                        "script is %d words, outside the %d-%d target but within the "
+                        "%d-%d accepted range",
+                        words,
+                        config.WORD_TARGET_MIN,
+                        config.WORD_TARGET_MAX,
+                        config.WORD_ACCEPT_MIN,
+                        config.WORD_ACCEPT_MAX,
+                    )
+                else:
+                    log.warning(
+                        "script is %d words, outside the preferred %d-%d range but within "
+                        "hard safety limits; verify duration carefully at M4",
+                        words,
+                        config.WORD_ACCEPT_MIN,
+                        config.WORD_ACCEPT_MAX,
+                    )
+
             return episode_script
 
         except Exception as exc:  # noqa: BLE001 - retry API and malformed-output alike

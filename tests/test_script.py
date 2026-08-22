@@ -84,7 +84,7 @@ def test_openrouter_provider_requests_strict_schema_and_reports_usage():
         return httpx.Response(
             200,
             json={
-                "model": "qwen/qwen3-30b-a3b-instruct-2507",
+                "model": "deepseek/deepseek-v3.2",
                 "choices": [{"message": {"content": VALID}}],
                 "usage": {
                     "prompt_tokens": 1_234,
@@ -97,7 +97,7 @@ def test_openrouter_provider_requests_strict_schema_and_reports_usage():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         provider = script.OpenRouterScriptProvider(
             api_key="test-key",
-            model="qwen/qwen3-30b-a3b-instruct-2507",
+            model="deepseek/deepseek-v3.2",
             client=client,
         )
         result = provider.generate("system", "user")
@@ -105,11 +105,16 @@ def test_openrouter_provider_requests_strict_schema_and_reports_usage():
     body = captured["body"]
     assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
-    assert body["model"] == "qwen/qwen3-30b-a3b-instruct-2507"
+    assert body["model"] == "deepseek/deepseek-v3.2"
     assert body["response_format"]["type"] == "json_schema"
     assert body["response_format"]["json_schema"]["strict"] is True
-    assert body["provider"]["require_parameters"] is True
+    assert body["provider"] == {"require_parameters": True, "sort": "throughput"}
     assert body["plugins"] == [{"id": "response-healing"}]
+    segments_schema = body["response_format"]["json_schema"]["schema"]["properties"][
+        "segments"
+    ]
+    assert segments_schema["minItems"] == config.SCRIPT_SEGMENT_MIN
+    assert segments_schema["maxItems"] == config.SCRIPT_SEGMENT_MAX
     speaker_schema = body["response_format"]["json_schema"]["schema"]["properties"][
         "segments"
     ]["items"]["properties"]["lines"]["items"]["properties"]["speaker"]
@@ -120,7 +125,16 @@ def test_openrouter_provider_requests_strict_schema_and_reports_usage():
     assert result.cost_usd == 0.0012
 
 
-def test_generate_script_accepts_an_injected_provider():
+def test_generate_script_accepts_an_injected_provider(monkeypatch):
+    monkeypatch.setattr(config, "WORD_TARGET_MIN", 1)
+    monkeypatch.setattr(config, "WORD_TARGET_MAX", 100)
+    monkeypatch.setattr(config, "WORD_ACCEPT_MIN", 1)
+    monkeypatch.setattr(config, "WORD_ACCEPT_MAX", 100)
+    monkeypatch.setattr(config, "WORD_HARD_MIN", 1)
+    monkeypatch.setattr(config, "WORD_HARD_MAX", 100)
+    monkeypatch.setattr(config, "SCRIPT_SEGMENT_MIN", 2)
+    monkeypatch.setattr(config, "SCRIPT_SEGMENT_MAX", 2)
+
     class FakeProvider:
         def generate(self, system_prompt: str, user_prompt: str) -> script.ScriptGeneration:
             assert system_prompt == script.SYSTEM_PROMPT
@@ -136,6 +150,75 @@ def test_generate_script_accepts_an_injected_provider():
     generated = script.generate_script(items(), "2026-08-20", provider=FakeProvider())
     assert generated.date == "2026-08-20"
     assert len(generated.segments) == 2
+
+
+def test_invalid_length_retries_with_only_the_previous_script(monkeypatch):
+    segment_count = config.SCRIPT_SEGMENT_MIN
+    words_per_segment = config.WORD_TARGET_MIN // segment_count
+    valid_segments = [
+        {
+            "topic": f"topic-{index}",
+            "lines": [
+                {
+                    "speaker": config.HOST_A,
+                    "text": " ".join(["word"] * words_per_segment),
+                }
+            ],
+        }
+        for index in range(segment_count)
+    ]
+
+    class RevisingProvider:
+        def __init__(self):
+            self.prompts = []
+
+        def generate(self, system_prompt: str, user_prompt: str) -> script.ScriptGeneration:
+            self.prompts.append(user_prompt)
+            text = VALID if len(self.prompts) == 1 else json.dumps({"segments": valid_segments})
+            return script.ScriptGeneration(text=text, model="test/model")
+
+    monkeypatch.setattr(config, "SCRIPT_RETRIES", 1)
+    monkeypatch.setattr(script.time, "sleep", lambda seconds: None)
+    provider = RevisingProvider()
+
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+
+    assert generated.word_count() == config.WORD_TARGET_MIN
+    assert "Acquisition" in provider.prompts[0]
+    assert "Revise the previous podcast JSON" in provider.prompts[1]
+    assert "The full article text, at length." not in provider.prompts[1]
+
+
+def test_soft_word_range_is_accepted_with_a_warning(caplog):
+    segments = [
+        {
+            "topic": f"topic-{index}",
+            "lines": [
+                {
+                    "speaker": config.HOST_A,
+                    "text": " ".join(["word"] * 250),
+                }
+            ],
+        }
+        for index in range(6)
+    ]
+
+    class SoftRangeProvider:
+        calls = 0
+
+        def generate(self, system_prompt: str, user_prompt: str) -> script.ScriptGeneration:
+            self.calls += 1
+            return script.ScriptGeneration(
+                text=json.dumps({"segments": segments}),
+                model="test/model",
+            )
+
+    provider = SoftRangeProvider()
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+
+    assert generated.word_count() == 1_500
+    assert provider.calls == 1
+    assert "outside the 1350-1450 target" in caplog.text
 
 
 def test_openrouter_http_error_is_a_script_error():
