@@ -15,8 +15,8 @@ edition; stages needing API keys or publication remain written-but-unrun.
 |---|---|---|
 | M1 Parser | done | **verified live** — 14 items parsed, 3 sponsors dropped, real fixture committed |
 | M2 Enrichment | done | **verified live** — 12/14 enriched (85.7%); 2 clean blurb fallbacks, 0 items lost |
-| M3 Script | done | **live candidate generated** — pending owner review |
-| M4 Audio | done | PCM math and ffmpeg argv tested; **ffmpeg never invoked, nothing listened to** |
+| M3 Script | done | **verified by owner** — grounded script approved in voiced episode |
+| M4 Audio | done | **verified live and approved** — 7/7 segments rendered, episode heard end-to-end |
 | M5 Publish | done | feed generation and retention tested; **never uploaded to R2** |
 | M6 Automate | done | workflows parse; **never run** |
 
@@ -31,10 +31,14 @@ the `mailto:` TLDR hiring item are excluded.
 links listing instead of article text; both fell back to their TLDR blurbs with
 `enriched: false`. No item was dropped.
 
-**M3 candidate generated on 2026-08-22.** DeepSeek V3.2 produced a grounded
-1,142-word script across 7 segments for $0.007748. This is inside hard safety
-limits but below the preferred 1,200-1,600 range, so duration needs careful M4
-verification. Owner review remains the M3 checkpoint.
+**M3 checkpoint passed on 2026-08-22.** DeepSeek V3.2 produced a grounded
+1,142-word script across 7 segments for $0.007748. The owner approved the script
+after hearing the voiced episode end-to-end.
+
+**M4 checkpoint passed on 2026-08-22.** Gemini rendered all 7 segments and
+ffmpeg produced a 3.44 MB mono 64 kbps MP3. The 7:10 runtime is below the nominal
+8-12 minute target, but the owner approved the pacing and final audio. Future
+scripts should still aim for 1,350-1,450 words rather than speeding up playback.
 
 ## Running it
 
