@@ -8,36 +8,31 @@ Full spec, decisions, and build order: [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Status
 
-The whole pipeline is written. What has actually been *proven* is narrower —
-the build environment had no route to `tldr.tech` and no ffmpeg, so the stages
-that need a live page, a key, or an encoder are written-but-unrun.
+The whole pipeline is written. M1 was verified against a live TLDR edition on
+2026-08-21; stages needing article fetches, API keys, or publication remain
+written-but-unrun.
 
 | Milestone | Code | Verified |
 |---|---|---|
-| M1 Parser | done | against a **synthetic** fixture only — see below |
+| M1 Parser | done | **verified live** — 14 items parsed, 3 sponsors dropped, real fixture committed |
 | M2 Enrichment | done | fallback path proven (0% network, 0 items lost); no real success rate measured |
 | M3 Script | done | prompt + response parsing tested; **no episode has been read** |
 | M4 Audio | done | PCM math and ffmpeg argv tested; **ffmpeg never invoked, nothing listened to** |
 | M5 Publish | done | feed generation and retention tested; **never uploaded to R2** |
 | M6 Automate | done | workflows parse; **never run** |
 
-**The committed fixture is synthetic.** It is written to the structure
-documented in the handoff, not captured from tldr.tech. It proves the parser
-does what we intended; it does not prove our intent matches the real page.
-Before trusting M1, run this from a machine with normal network access:
-
-```bash
-python scripts/capture_fixture.py
-```
-
-It writes `tests/fixtures/tldr-<date>.html` and prints the parsed items for you
-to eyeball for ads. A real fixture also activates the currently-skipped test in
-`tests/test_parse.py`. This is the single highest-value thing left to do.
+**M1 checkpoint passed on 2026-08-21.** The live page used anchors wrapping
+headings rather than headings containing anchors, so the parser was fixed to
+support both shapes. `tests/fixtures/tldr-2026-08-21.html` is the captured real
+edition; all 14 editorial items have blurbs, and all 3 `(Sponsor)` slots plus
+the `mailto:` TLDR hiring item are excluded.
 
 ## Running it
 
+Python 3.11+ is required.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt          # ffmpeg must also be on PATH
 
 python main.py --stage parse             # M1: items as JSON, no credentials needed
@@ -52,7 +47,7 @@ freshness and idempotency guards, `--no-upload` skips R2 entirely, `--edition ai
 switches newsletters.
 
 ```bash
-pytest -q                                # 111 passing, 1 skipped
+pytest -q                                # 112 passing
 ```
 
 ## Pipeline
@@ -101,7 +96,6 @@ M1 and M2 need no credentials at all.
 
 ## Known gaps
 
-- No real edition has ever been parsed. See the fixture note above.
 - `src/config.py` pins a Gemini TTS model ID that was not verifiable at build
   time. Model IDs churn; check current docs and override with `TTS_MODEL`
   rather than editing, so the check stays cheap.

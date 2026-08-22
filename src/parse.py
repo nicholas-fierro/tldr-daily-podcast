@@ -1,8 +1,8 @@
 """Stage 2: edition HTML -> items[].
 
 Parses structurally rather than by CSS class. TLDR's class names are
-Tailwind-ish and churn; the heading -> paragraph -> link shape has been
-stable for years. Sponsor filtering lives here and nowhere else.
+Tailwind-ish and churn; item links either contain a heading or wrap one, with
+the blurb following as a sibling. Sponsor filtering lives here and nowhere else.
 """
 
 from __future__ import annotations
@@ -144,11 +144,17 @@ def parse_edition(html: str) -> list[Item]:
 
     for heading in root.find_all(HEADING_TAGS):
         anchor = heading.find("a", href=True)
+        blurb_start = heading
 
         if anchor is None:
-            if _looks_like_section(heading):
-                section = _clean(heading.get_text())
-            continue
+            parent = heading.parent
+            if isinstance(parent, Tag) and parent.name == "a" and parent.get("href"):
+                anchor = parent
+                blurb_start = parent
+            else:
+                if _looks_like_section(heading):
+                    section = _clean(heading.get_text())
+                continue
 
         raw_title = _clean(anchor.get_text(" "))
         if not raw_title:
@@ -174,7 +180,7 @@ def parse_edition(html: str) -> list[Item]:
                 section=section,
                 title=title,
                 url=url,
-                blurb=_blurb_after(heading),
+                blurb=_blurb_after(blurb_start),
                 read_time=int(read_time_match.group(1)) if read_time_match else None,
                 is_github_repo="github repo" in (annotation or "").lower(),
             )

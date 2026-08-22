@@ -1,13 +1,7 @@
-"""The highest-value test in the project.
+"""Sponsor filtering and item extraction against a captured TLDR edition.
 
-Sponsor filtering and item extraction, against a fixture. When TLDR changes
-their markup, this is what tells you — before a silent episode does.
-
-NOTE: the committed fixture is SYNTHETIC, written to the structure documented
-in docs/HANDOFF.md. It proves the parser does what we intend; it does not
-prove the intent matches the real page. Run scripts/capture_fixture.py to
-capture a real edition and re-run these tests against it — until then, treat
-a green run here as necessary but not sufficient.
+When TLDR changes its markup, this fixture should fail before a silent episode
+or ad read reaches the feed.
 """
 
 from pathlib import Path
@@ -17,36 +11,35 @@ import pytest
 from src.parse import Item, ParseError, is_sponsored, normalize_url, parse_edition
 
 FIXTURES = Path(__file__).parent / "fixtures"
-SYNTHETIC = FIXTURES / "synthetic-edition.html"
-
-# Point this at a captured edition once you have one; the tests below that use
-# it will start running instead of skipping.
-REAL_FIXTURE = next(iter(sorted(FIXTURES.glob("tldr-*.html"))), None)
+REAL_FIXTURE = FIXTURES / "tldr-2026-08-21.html"
 
 
 @pytest.fixture
 def items() -> list[Item]:
-    return parse_edition(SYNTHETIC.read_text(encoding="utf-8"))
+    return parse_edition(REAL_FIXTURE.read_text(encoding="utf-8"))
 
 
 # --- sponsor filtering ----------------------------------------------------
 
 def test_no_sponsored_items_survive(items):
     urls = " ".join(item.url for item in items)
-    titles = " ".join(item.title.lower() for item in items)
+    titles = {item.title for item in items}
 
     assert "advertise.tldr.tech" not in urls
     assert "ashbyhq.com" not in urls
-    assert "(sponsor)" not in titles
-    assert "sponsor" not in titles
+    assert "Reach 8 million tech professionals on TLDR" not in titles
+    assert "Glean costs 75% less per task" not in titles
+    assert "Reduce your AI defect rates and lower your token consumption up to 36%." not in titles
+    assert "TLDR is hiring a curator for TLDR Product!" not in titles
 
 
 def test_sponsor_slots_are_actually_present_in_the_fixture():
     """Guards the guard: a fixture with no ads would make the test above vacuous."""
-    raw = SYNTHETIC.read_text(encoding="utf-8")
+    raw = REAL_FIXTURE.read_text(encoding="utf-8")
+    assert "Reach 8 million tech professionals on TLDR (Sponsor)" in raw
+    assert "Glean costs 75% less per task (Sponsor)" in raw
+    assert "Reduce your AI defect rates and lower your token consumption up to 36%. (Sponsor)" in raw
     assert "advertise.tldr.tech" in raw
-    assert "jobs.ashbyhq.com" in raw
-    assert "(Sponsor)" in raw
 
 
 @pytest.mark.parametrize(
@@ -74,39 +67,59 @@ def test_is_sponsored_does_not_eat_real_items():
 
 def test_extracts_the_expected_items(items):
     titles = [item.title for item in items]
-    assert "Chipmaker Acquires Inference Startup for $4B" in titles
-    assert "Three Async Rust Pitfalls" in titles
-    # 10 anchors in the fixture, minus 2 sponsors, minus 1 in-edition repeat
-    assert len(items) == 7
+    assert "Anthropic Expects to Match or Top SpaceX's Record IPO Size" in titles
+    assert "Waymo has designed a robocar chip to stay ahead of Tesla" in titles
+    assert len(items) == 14
 
 
 def test_sections_are_preserved(items):
     by_title = {item.title: item.section for item in items}
-    assert by_title["Chipmaker Acquires Inference Startup for $4B"] == "Big Tech & Startups"
-    assert by_title["Solid-State Battery Hits 800 Cycles"] == "Science & Futuristic Technology"
-    assert by_title["Discussion: The State of Package Managers"] == "Quick Links"
+    assert by_title["Anthropic Expects to Match or Top SpaceX's Record IPO Size"] == "Big Tech & Startups"
+    assert by_title["Tesla's Austin robotaxis are now fully driverless, tracking shows"] == "Science & Futuristic Technology"
+    assert by_title["Better Batteries"] == "Programming, Design & Data Science"
+    assert by_title["The End Of Open Source"] == "Miscellaneous"
+    assert by_title["Waymo has designed a robocar chip to stay ahead of Tesla"] == "Quick Links"
 
 
 def test_read_time_is_parsed(items):
     by_title = {item.title: item.read_time for item in items}
-    assert by_title["Chipmaker Acquires Inference Startup for $4B"] == 4
-    assert by_title["Three Async Rust Pitfalls"] == 8
+    assert by_title["Anthropic Expects to Match or Top SpaceX's Record IPO Size"] == 4
+    assert by_title["The End Of Open Source"] == 20
 
 
-def test_github_repos_are_flagged_and_carry_no_read_time(items):
-    repo = next(item for item in items if item.title == "example-tool")
+def test_github_repos_are_flagged_and_carry_no_read_time():
+    html = """
+    <main>
+      <h3>Programming, Design &amp; Data Science</h3>
+      <a href="https://github.com/example/tool?utm_source=tldrnewsletter">
+        <h3>example-tool (GitHub Repo)</h3>
+      </a>
+      <div>Repository summary.</div>
+    </main>
+    """
+    [repo] = parse_edition(html)
     assert repo.is_github_repo
     assert repo.read_time is None
+    assert repo.blurb == "Repository summary."
 
 
 def test_blurbs_are_captured(items):
-    battery = next(item for item in items if "Solid-State" in item.title)
-    assert "eighty percent" in battery.blurb
+    batteries = next(item for item in items if item.title == "Better Batteries")
+    assert "Python's stdlib" in batteries.blurb
 
 
-def test_duplicate_url_within_one_edition_is_dropped(items):
-    urls = [item.url for item in items]
-    assert len(urls) == len(set(urls))
+def test_duplicate_url_within_one_edition_is_dropped():
+    html = """
+    <main>
+      <h3>Quick Links</h3>
+      <h4><a href="https://example.com/story?utm_source=tldr">Story (4 minute read)</a></h4>
+      <p>First summary.</p>
+      <h4><a href="https://example.com/story?utm_medium=quicklink">Story again (1 minute read)</a></h4>
+      <p>Repeated summary.</p>
+    </main>
+    """
+    items = parse_edition(html)
+    assert len(items) == 1
 
 
 def test_annotation_is_stripped_from_titles(items):
@@ -152,9 +165,7 @@ def test_structure_change_surfaces_as_zero_items():
         parse_edition(html)
 
 
-# --- real fixture, once one exists ----------------------------------------
-
-@pytest.mark.skipif(REAL_FIXTURE is None, reason="no real edition captured yet")
+# --- real fixture integrity ------------------------------------------------
 def test_real_edition_parses_into_a_plausible_shape():
     items = parse_edition(REAL_FIXTURE.read_text(encoding="utf-8"))
     assert 8 <= len(items) <= 25, f"got {len(items)} items — structure may have shifted"

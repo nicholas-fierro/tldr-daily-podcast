@@ -19,7 +19,7 @@
 
 ---
 
-## 2. Source format (verified 2026-08-20)
+## 2. Source format (verified 2026-08-21)
 
 `https://tldr.tech/api/latest/tech` **302-redirects** to `https://tldr.tech/tech/YYYY-MM-DD` for the most recent edition. Use the `/api/latest/tech` URL as the entry point — it removes all date math and the "has today's edition published yet?" guesswork. Capture the final redirect URL to learn the edition date.
 
@@ -27,13 +27,13 @@ Page structure (as of the verification date — **re-verify before writing selec
 
 - A page title of the form `TLDR YYYY-MM-DD`
 - Section headers: `Big Tech & Startups`, `Science & Futuristic Technology`, `Programming, Design & Data Science`, `Miscellaneous`, `Quick Links`
-- Each item is a heading containing an anchor whose text is `Title (N minute read)` or `Title (GitHub Repo)`, followed by a sibling paragraph containing TLDR's summary
+- Each item is an `<article>` whose direct child anchor wraps an `<h3>` with text `Title (N minute read)` or `Title (GitHub Repo)`; a sibling `<div>` contains TLDR's summary
 - Outbound links carry `?utm_source=tldrnewsletter`
-- Typical edition: 10–15 items across all sections
+- The captured 2026-08-21 edition had 14 editorial items, 3 `(Sponsor)` slots, and one `mailto:` TLDR hiring item
 
 ### Parsing requirements
 
-1. **Parse structurally, not by CSS class.** Walk headings and their following sibling paragraphs. TLDR's class names are Tailwind-ish and will change; the heading→paragraph→link shape has been stable for years.
+1. **Parse structurally, not by CSS class.** Support both observed heading/link nestings (`<a><h3>…</h3></a>` and `<h3><a>…</a></h3>`) and collect the following summary sibling. TLDR's Tailwind-ish class names will change.
 2. **Filter sponsored content aggressively.** Drop any item where:
    - the link text contains `(Sponsor)`
    - the URL host is `advertise.tldr.tech`
@@ -180,7 +180,7 @@ src/
   state.py        # dedup window, idempotency checks
   config.py       # voices, word targets, model IDs, thresholds
 tests/
-  fixtures/tldr-2026-08-20.html
+  fixtures/tldr-2026-08-21.html
   test_parse.py   # sponsor filtering + item extraction
 main.py
 ```

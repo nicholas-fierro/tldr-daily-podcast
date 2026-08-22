@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Capture a real edition's HTML as a test fixture.
 
-The committed fixture is synthetic — written to the structure documented in
-docs/HANDOFF.md, not captured from tldr.tech (the build environment could not
-reach it). Run this once from a machine with normal network access to replace
-it with the real thing, which is what the handoff actually asks for:
+Run this when refreshing the committed snapshot or checking TLDR markup drift:
 
     python scripts/capture_fixture.py              # today's edition
-    python scripts/capture_fixture.py 2026-08-20   # a specific one
+    python scripts/capture_fixture.py 2026-08-21   # a specific one
 
-Then point tests/test_parse.py's REAL_FIXTURE at the file it writes and check
-that the assertions still hold. If they don't, the parser is wrong about the
-real page and that is exactly what this fixture exists to tell you.
+It writes tests/fixtures/tldr-<date>.html and prints every parsed item for an
+ad check. Point tests/test_parse.py's REAL_FIXTURE at a new snapshot before
+replacing the current fixture.
 """
 
 import sys

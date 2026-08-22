@@ -4,7 +4,7 @@
 log, and the build plan. The decisions in section 1 are settled — don't
 re-litigate them unless you hit a genuine wall, and say so if you do.
 
-## This repository is private, but treat secrets as if it weren't
+## This repository is public, but treat secrets with that in mind
 
 Never commit API keys, R2 credentials, the feed token, or the unguessable feed
 path. They live in GitHub repository secrets and a gitignored local `.env`.
@@ -25,7 +25,7 @@ Generated episodes and `feed*.xml` are gitignored too.
 ## Commands
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt   # ffmpeg must be on PATH
 pytest                            # tests/test_parse.py is the highest-value test
 python main.py --date YYYY-MM-DD  # re-run a past edition
