@@ -69,11 +69,13 @@ DEDUP_WINDOW_DAYS = 3  # how far back a repeat suppresses an item
 
 SCRIPT_PROVIDER = os.environ.get("SCRIPT_PROVIDER", "openrouter").strip().lower()
 SCRIPT_MODEL = os.environ.get(
-    "SCRIPT_MODEL", "qwen/qwen3-30b-a3b-instruct-2507"
+    "SCRIPT_MODEL", "deepseek/deepseek-v3.2"
 ).strip()
-SCRIPT_MAX_TOKENS = 8_000
+SCRIPT_MAX_TOKENS = 3_600
 SCRIPT_RETRIES = 2
 SCRIPT_TIMEOUT = 180.0
+SCRIPT_SEGMENT_MIN = 5
+SCRIPT_SEGMENT_MAX = 8
 
 OPENROUTER_BASE_URL = os.environ.get(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
@@ -88,6 +90,10 @@ HOST_B = "Ben"  # explains, contextualizes, supplies the numbers
 
 WORD_TARGET_MIN = 1_350
 WORD_TARGET_MAX = 1_450
+WORD_ACCEPT_MIN = 1_200
+WORD_ACCEPT_MAX = 1_600
+WORD_HARD_MIN = 1_100
+WORD_HARD_MAX = 1_700
 
 # --- tts ------------------------------------------------------------------
 

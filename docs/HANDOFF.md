@@ -12,7 +12,7 @@
 |---|---|---|
 | Source of content | `https://tldr.tech/api/latest/tech` (public web) | No Gmail OAuth, no IMAP, no email parsing. Cleaner HTML than the email. Verified working. |
 | Audio generation | Gemini multi-speaker TTS via API | NotebookLM has **no public consumer API**. Its programmatic audio-overview endpoint is enterprise-only (Gemini Enterprise / Discovery Engine). Browser-automation wrappers around the NotebookLM UI exist but are fragile and break on every UI change — explicitly rejected. |
-| Script generation | OpenRouter (`qwen/qwen3-30b-a3b-instruct-2507`) | Cheap open-weight inference works from GitHub Actions while preserving control over length, structure, tone, and structured output. |
+| Script generation | OpenRouter (`deepseek/deepseek-v3.2`) | Cheap open-weight inference works from GitHub Actions while preserving control over length, structure, tone, and structured output. |
 | Orchestration | GitHub Actions (scheduled workflow) | Free, built-in cron, built-in secrets, built-in logs and artifact retention, no server to patch. |
 | Storage + delivery | Cloudflare R2 + private RSS feed | Effectively free at this volume, S3-compatible, no egress fees. Any podcast app can subscribe. |
 | n8n | **Not** for the core pipeline | Article fetching, retry logic, chunked TTS, and audio concatenation are code-shaped, not node-shaped. Revisit only if a non-technical person needs to edit the flow. |
@@ -84,7 +84,7 @@ One OpenRouter call. Pass every item as structured input: section, title, URL, b
 **Prompt requirements:**
 
 - Two named hosts with distinct, consistent roles — suggest one who frames and asks, one who explains and contextualizes. Give them fixed names and keep them constant across episodes (listeners anchor on this).
-- **Target 1,350–1,450 words.** At conversational two-host pace this lands near 10 minutes. Tell the model the target explicitly and tell it that going long is a failure.
+- **Target 1,350–1,450 words.** Accept 1,200–1,600 with a warning, and hard-fail only below 1,100 or above 1,700. Word count is a proxy; the real gate is the 8–12 minute ffprobe duration at M4.
 - **Group by theme, not by TLDR's ordering.** "Three things happened in AI infrastructure today" beats reading a list in order.
 - **Weight by substance, not by section.** A major acquisition gets 90 seconds; a Quick Link gets one sentence or gets cut. Explicitly authorize the model to omit weak items.
 - **Mark low-confidence items.** Where `enriched: false`, the hosts should hedge naturally ("the summary suggests…") rather than confabulate detail. This is important — unenriched items are where hallucination will show up.
