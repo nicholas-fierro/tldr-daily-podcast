@@ -28,6 +28,11 @@ GITHUB_REPO_URL = re.compile(r"^https?://(?:www\.)?github\.com/([^/]+)/([^/#?]+)
 def _is_paywall_stub(text: str) -> bool:
     if len(text) < config.PAYWALL_MIN_CHARS:
         return True
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if sum(line in {"-", "•"} for line in lines) >= 8:
+        return True
+
     head = text[:1_500].lower()
     return any(marker in head for marker in config.PAYWALL_MARKERS)
 

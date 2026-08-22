@@ -12,7 +12,7 @@
 |---|---|---|
 | Source of content | `https://tldr.tech/api/latest/tech` (public web) | No Gmail OAuth, no IMAP, no email parsing. Cleaner HTML than the email. Verified working. |
 | Audio generation | Gemini multi-speaker TTS via API | NotebookLM has **no public consumer API**. Its programmatic audio-overview endpoint is enterprise-only (Gemini Enterprise / Discovery Engine). Browser-automation wrappers around the NotebookLM UI exist but are fragile and break on every UI change — explicitly rejected. |
-| Script generation | Claude API (`claude-sonnet-5`) | Separating script-writing from voicing gives us control over length, structure, and tone that NotebookLM doesn't expose. |
+| Script generation | OpenRouter (`qwen/qwen3-30b-a3b-instruct-2507`) | Cheap open-weight inference works from GitHub Actions while preserving control over length, structure, tone, and structured output. |
 | Orchestration | GitHub Actions (scheduled workflow) | Free, built-in cron, built-in secrets, built-in logs and artifact retention, no server to patch. |
 | Storage + delivery | Cloudflare R2 + private RSS feed | Effectively free at this volume, S3-compatible, no egress fees. Any podcast app can subscribe. |
 | n8n | **Not** for the core pipeline | Article fetching, retry logic, chunked TTS, and audio concatenation are code-shaped, not node-shaped. Revisit only if a non-technical person needs to edit the flow. |
@@ -79,7 +79,7 @@ Persist the last 7 days of item URLs in R2 as a small JSON file. If a normalized
 
 ### 3.3 Script generation
 
-One Claude API call. Pass every item as structured input: section, title, URL, blurb, full text (or blurb + `enriched: false`), read-time estimate.
+One OpenRouter call. Pass every item as structured input: section, title, URL, blurb, full text (or blurb + `enriched: false`), read-time estimate. Require JSON Schema output and route only to providers supporting it.
 
 **Prompt requirements:**
 
@@ -154,7 +154,7 @@ TLDR lands roughly 6:00–7:00am ET on weekdays.
 | Parser returns 0 items | **Hard fail + alert.** This means the page structure changed. |
 | Parser returns <5 items | Warn + alert, but continue |
 | Individual article fetch fails | Fall back to blurb, log, continue |
-| Claude API fails | Retry 2×, then hard fail + alert |
+| OpenRouter API fails | Retry 2×, then hard fail + alert |
 | A TTS segment fails 3× | Drop the segment, continue, log a warning |
 | >30% of TTS segments fail | Hard fail — don't ship a mangled episode |
 | Upload fails | Retry, then hard fail + alert |
@@ -173,7 +173,7 @@ src/
   fetch.py        # get /api/latest/tech, follow redirect, return html + date
   parse.py        # html -> items[]; sponsor filtering lives here
   enrich.py       # concurrent article fetch + readable-text extraction
-  script.py       # items -> Claude -> segmented dialogue JSON
+  script.py       # items -> OpenRouter -> segmented dialogue JSON
   tts.py          # segments -> per-segment audio, with retry
   audio.py        # ffmpeg concat, silence padding, loudnorm, mp3, tags
   publish.py      # R2 upload, feed rebuild, retention pruning
@@ -185,9 +185,9 @@ tests/
 main.py
 ```
 
-Python is the recommended stack (Trafilatura, `google-genai`, `anthropic`, `boto3` all clean). Node is acceptable if preferred; extraction quality is the only real tradeoff.
+Python is the recommended stack (Trafilatura, `httpx`, `google-genai`, and `boto3` all clean). Node is acceptable if preferred; extraction quality is the only real tradeoff.
 
-**Secrets** (GitHub repository secrets): `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (or GCP service account JSON if using the Vertex/Cloud TTS path), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `FEED_TOKEN`, `ALERT_WEBHOOK_URL`.
+**Secrets** (GitHub repository secrets): `OPENROUTER_API_KEY`, `GEMINI_API_KEY` (or GCP service account JSON if using the Vertex/Cloud TTS path), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `FEED_TOKEN`, `ALERT_WEBHOOK_URL`.
 
 Runner needs ffmpeg: `sudo apt-get install -y ffmpeg` or the `FedericoCarboni/setup-ffmpeg` action.
 
@@ -199,7 +199,7 @@ Runner needs ffmpeg: `sudo apt-get install -y ffmpeg` or the `FedericoCarboni/se
 
 **M2 — Enrichment.** Add concurrent article fetching. Report the enrichment success rate. *Checkpoint: ≥65% of items enriched, failures degrade cleanly to blurbs.*
 
-**M3 — Script.** Add Claude script generation, output segmented JSON. *Checkpoint: I read the script and it's genuinely good — well-grouped, right weighting, no confabulation on unenriched items. Iterate on the prompt here until it is. This is the step that determines whether the whole thing is worth listening to; don't rush past it.*
+**M3 — Script.** Add OpenRouter script generation, output segmented JSON. *Checkpoint: I read the script and it's genuinely good — well-grouped, right weighting, no confabulation on unenriched items. Iterate on the prompt here until it is. This is the step that determines whether the whole thing is worth listening to; don't rush past it.*
 
 **M4 — Audio.** Add chunked TTS, concat, normalize, MP3 out to local disk. *Checkpoint: I listen end-to-end. Duration in range, no clipping at seams, voices consistent.*
 
@@ -211,7 +211,7 @@ Runner needs ffmpeg: `sudo apt-get install -y ffmpeg` or the `FedericoCarboni/se
 
 ## 8. Notes / open questions
 
-- Cost should be small — a few cents per episode across Claude and TTS — but **verify current API pricing during M3/M4 rather than assuming**, and log per-run token and character counts so we can see actual spend.
+- Cost should be small — pennies per month for OpenRouter script generation plus TTS — but **verify current API pricing during M3/M4 rather than assuming**, and log per-run token and character counts so we can see actual spend.
 - If TTS voice quality disappoints at M4, ElevenLabs is the fallback. It's meaningfully more expensive but the voices are better. Keep the TTS module behind a clean interface so swapping providers is a one-file change.
 - If I later want other TLDR editions (AI, Web Dev, InfoSec), the path is `/api/latest/<edition>` — the parser should take the edition slug as a parameter from day one, even though we only use `tech` now.
 - Not in scope for v1: chapter markers, transcripts in the feed, per-item "read more" deep links beyond the description list, any web UI.

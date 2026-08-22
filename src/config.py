@@ -10,6 +10,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
+
 # --- source ---------------------------------------------------------------
 
 EDITION = "tech"  # slug; /api/latest/<edition>. Others: ai, webdev, infosec.
@@ -63,9 +67,21 @@ DEDUP_WINDOW_DAYS = 3  # how far back a repeat suppresses an item
 
 # --- script ---------------------------------------------------------------
 
-SCRIPT_MODEL = "claude-sonnet-5"
+SCRIPT_PROVIDER = os.environ.get("SCRIPT_PROVIDER", "openrouter").strip().lower()
+SCRIPT_MODEL = os.environ.get(
+    "SCRIPT_MODEL", "qwen/qwen3-30b-a3b-instruct-2507"
+).strip()
 SCRIPT_MAX_TOKENS = 8_000
 SCRIPT_RETRIES = 2
+SCRIPT_TIMEOUT = 180.0
+
+OPENROUTER_BASE_URL = os.environ.get(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+).rstrip("/")
+OPENROUTER_REFERER = os.environ.get(
+    "OPENROUTER_REFERER", "https://github.com/nicholas-fierro/tldr-daily-podcast"
+).strip()
+OPENROUTER_TITLE = os.environ.get("OPENROUTER_TITLE", "TLDR Daily Podcast").strip()
 
 HOST_A = "Ava"  # frames, asks, drives the running order
 HOST_B = "Ben"  # explains, contextualizes, supplies the numbers
@@ -173,8 +189,8 @@ def r2_config() -> R2Config:
     )
 
 
-def anthropic_key() -> str:
-    return _require("ANTHROPIC_API_KEY")
+def openrouter_key() -> str:
+    return _require("OPENROUTER_API_KEY")
 
 
 def gemini_key() -> str:

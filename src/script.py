@@ -1,6 +1,6 @@
 """Stage 4: items -> a two-host dialogue, as segmented JSON.
 
-One Claude call. The prompt is the highest-leverage text in the project: it
+One model call. The prompt is the highest-leverage text in the project: it
 decides whether the episode is worth listening to. Expect to iterate on it.
 """
 
@@ -11,6 +11,9 @@ import logging
 import re
 import time
 from dataclasses import dataclass, asdict
+from typing import Protocol
+
+import httpx
 
 from . import config
 from .parse import Item
@@ -110,6 +113,162 @@ mid-sentence handoffs. Aim for 5-8 segments. Speaker must be exactly \
 "{config.HOST_A}" or "{config.HOST_B}"."""
 
 
+SCRIPT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "segments": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "minLength": 1},
+                    "lines": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "speaker": {
+                                    "type": "string",
+                                    "enum": [config.HOST_A, config.HOST_B],
+                                },
+                                "text": {"type": "string", "minLength": 1},
+                            },
+                            "required": ["speaker", "text"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["topic", "lines"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["segments"],
+    "additionalProperties": False,
+}
+
+
+@dataclass(frozen=True)
+class ScriptGeneration:
+    text: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float | None = None
+
+
+class ScriptProvider(Protocol):
+    def generate(self, system_prompt: str, user_prompt: str) -> ScriptGeneration:
+        """Generate one structured podcast script."""
+        ...
+
+
+class OpenRouterScriptProvider:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.api_key = api_key or config.openrouter_key()
+        self.model = model or config.SCRIPT_MODEL
+        self.client = client
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if config.OPENROUTER_REFERER:
+            headers["HTTP-Referer"] = config.OPENROUTER_REFERER
+        if config.OPENROUTER_TITLE:
+            headers["X-Title"] = config.OPENROUTER_TITLE
+        return headers
+
+    def _body(self, system_prompt: str, user_prompt: str) -> dict:
+        return {
+            "model": self.model,
+            "max_tokens": config.SCRIPT_MAX_TOKENS,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "podcast_script",
+                    "strict": True,
+                    "schema": SCRIPT_JSON_SCHEMA,
+                },
+            },
+            "provider": {"require_parameters": True},
+            "plugins": [{"id": "response-healing"}],
+        }
+
+    def _post(
+        self,
+        client: httpx.Client,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> ScriptGeneration:
+        response = client.post(
+            f"{config.OPENROUTER_BASE_URL}/chat/completions",
+            headers=self._headers(),
+            json=self._body(system_prompt, user_prompt),
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = response.text.strip()[:500]
+            raise ScriptError(
+                f"OpenRouter returned HTTP {response.status_code}: {detail}"
+            ) from exc
+
+        try:
+            payload = response.json()
+            content = payload["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise ScriptError("OpenRouter returned an invalid completion payload") from exc
+
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text", ""))
+                for part in content
+                if isinstance(part, dict)
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise ScriptError("OpenRouter returned an empty completion")
+
+        usage = payload.get("usage") or {}
+        raw_cost = usage.get("cost")
+        try:
+            cost = float(raw_cost) if raw_cost is not None else None
+        except (TypeError, ValueError):
+            cost = None
+
+        return ScriptGeneration(
+            text=content,
+            model=str(payload.get("model") or self.model),
+            input_tokens=int(usage.get("prompt_tokens") or 0),
+            output_tokens=int(usage.get("completion_tokens") or 0),
+            cost_usd=cost,
+        )
+
+    def generate(self, system_prompt: str, user_prompt: str) -> ScriptGeneration:
+        if self.client is not None:
+            return self._post(self.client, system_prompt, user_prompt)
+        with httpx.Client(timeout=config.SCRIPT_TIMEOUT) as client:
+            return self._post(client, system_prompt, user_prompt)
+
+
+def _default_script_provider() -> ScriptProvider:
+    if config.SCRIPT_PROVIDER == "openrouter":
+        return OpenRouterScriptProvider()
+    raise ScriptError(f"unsupported script provider: {config.SCRIPT_PROVIDER}")
+
+
 def build_user_prompt(items: list[Item], date: str) -> str:
     payload = {
         "edition_date": date,
@@ -174,37 +333,51 @@ def parse_script_json(raw: str, date: str) -> Script:
     return Script(date=date, segments=segments)
 
 
-def generate_script(items: list[Item], date: str) -> Script:
-    """One Claude call, retried twice. Raises ScriptError if it can't produce one."""
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=config.anthropic_key())
+def generate_script(
+    items: list[Item],
+    date: str,
+    provider: ScriptProvider | None = None,
+) -> Script:
+    """Generate one script, retrying API and malformed-output failures."""
+    provider = provider or _default_script_provider()
     user_prompt = build_user_prompt(items, date)
     last_error: Exception | None = None
 
     for attempt in range(1, config.SCRIPT_RETRIES + 2):
         try:
-            response = client.messages.create(
-                model=config.SCRIPT_MODEL,
-                max_tokens=config.SCRIPT_MAX_TOKENS,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            usage = response.usage
-            log.info("script tokens: in=%d out=%d", usage.input_tokens, usage.output_tokens)
+            generation = provider.generate(SYSTEM_PROMPT, user_prompt)
+            if generation.cost_usd is None:
+                log.info(
+                    "script model=%s tokens: in=%d out=%d",
+                    generation.model,
+                    generation.input_tokens,
+                    generation.output_tokens,
+                )
+            else:
+                log.info(
+                    "script model=%s tokens: in=%d out=%d cost=$%.6f",
+                    generation.model,
+                    generation.input_tokens,
+                    generation.output_tokens,
+                    generation.cost_usd,
+                )
 
-            script = parse_script_json(
-                "".join(block.text for block in response.content if block.type == "text"), date
+            episode_script = parse_script_json(generation.text, date)
+            words = episode_script.word_count()
+            log.info(
+                "script: %d words across %d segments",
+                words,
+                len(episode_script.segments),
             )
-            words = script.word_count()
-            log.info("script: %d words across %d segments", words, len(script.segments))
             if not config.WORD_TARGET_MIN * 0.8 <= words <= config.WORD_TARGET_MAX * 1.2:
                 log.warning(
                     "script is %d words, well outside the %d-%d target — episode duration "
                     "will drift; consider tightening the prompt",
-                    words, config.WORD_TARGET_MIN, config.WORD_TARGET_MAX,
+                    words,
+                    config.WORD_TARGET_MIN,
+                    config.WORD_TARGET_MAX,
                 )
-            return script
+            return episode_script
 
         except Exception as exc:  # noqa: BLE001 - retry API and malformed-output alike
             last_error = exc

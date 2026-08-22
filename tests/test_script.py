@@ -7,6 +7,7 @@ that malformed output is caught rather than voiced.
 
 import json
 
+import httpx
 import pytest
 
 from src import config, script
@@ -71,6 +72,80 @@ VALID = json.dumps({
         ]},
     ]
 })
+
+
+def test_openrouter_provider_requests_strict_schema_and_reports_usage():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["headers"] = request.headers
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen/qwen3-30b-a3b-instruct-2507",
+                "choices": [{"message": {"content": VALID}}],
+                "usage": {
+                    "prompt_tokens": 1_234,
+                    "completion_tokens": 456,
+                    "cost": 0.0012,
+                },
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = script.OpenRouterScriptProvider(
+            api_key="test-key",
+            model="qwen/qwen3-30b-a3b-instruct-2507",
+            client=client,
+        )
+        result = provider.generate("system", "user")
+
+    body = captured["body"]
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert body["model"] == "qwen/qwen3-30b-a3b-instruct-2507"
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["strict"] is True
+    assert body["provider"]["require_parameters"] is True
+    assert body["plugins"] == [{"id": "response-healing"}]
+    speaker_schema = body["response_format"]["json_schema"]["schema"]["properties"][
+        "segments"
+    ]["items"]["properties"]["lines"]["items"]["properties"]["speaker"]
+    assert speaker_schema["enum"] == [config.HOST_A, config.HOST_B]
+    assert result.text == VALID
+    assert result.input_tokens == 1_234
+    assert result.output_tokens == 456
+    assert result.cost_usd == 0.0012
+
+
+def test_generate_script_accepts_an_injected_provider():
+    class FakeProvider:
+        def generate(self, system_prompt: str, user_prompt: str) -> script.ScriptGeneration:
+            assert system_prompt == script.SYSTEM_PROMPT
+            assert "Acquisition" in user_prompt
+            return script.ScriptGeneration(
+                text=VALID,
+                model="test/model",
+                input_tokens=100,
+                output_tokens=20,
+                cost_usd=0.0001,
+            )
+
+    generated = script.generate_script(items(), "2026-08-20", provider=FakeProvider())
+    assert generated.date == "2026-08-20"
+    assert len(generated.segments) == 2
+
+
+def test_openrouter_http_error_is_a_script_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": {"message": "invalid key"}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        provider = script.OpenRouterScriptProvider(api_key="bad-key", client=client)
+        with pytest.raises(script.ScriptError, match="OpenRouter returned HTTP 401"):
+            provider.generate("system", "user")
 
 
 def test_parses_valid_output():

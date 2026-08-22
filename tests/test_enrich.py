@@ -50,6 +50,14 @@ def test_real_article_is_not_a_stub():
     assert not enrich._is_paywall_stub("Genuine reporting. " * 100)
 
 
+def test_navigation_link_listing_is_a_stub():
+    listing = "\n".join(
+        f"-\nCategory {index}: headline and teaser text repeated several times"
+        for index in range(10)
+    )
+    assert enrich._is_paywall_stub(listing)
+
+
 # --- truncation -----------------------------------------------------------
 
 def test_short_text_is_untouched():

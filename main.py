@@ -4,7 +4,7 @@
     python main.py                      # today's edition, full pipeline
     python main.py --date 2026-08-20    # re-run a past edition
     python main.py --stage parse        # stop after a stage and print the result
-    python main.py --stage enrich --local out/   # no R2, no upload
+    python main.py --stage enrich --force        # M2, no R2 credentials
 
 Stages run in order and each one stops after the named step, which is how the
 milestones in docs/HANDOFF.md are meant to be driven.
@@ -67,9 +67,9 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps([item.to_dict() for item in items], indent=2))
         return 0
 
-    # --- R2 wiring (skipped entirely in --local runs) ---
+    # R2 is part of publishing, not local milestone checkpoints.
     client = cfg = None
-    if not args.no_upload:
+    if stop_after == _stage_index("publish") and not args.no_upload:
         cfg = config.r2_config()
         client = publish.r2_client(cfg)
 

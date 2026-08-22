@@ -8,14 +8,13 @@ Full spec, decisions, and build order: [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Status
 
-The whole pipeline is written. M1 was verified against a live TLDR edition on
-2026-08-21; stages needing article fetches, API keys, or publication remain
-written-but-unrun.
+The whole pipeline is written. M1 and M2 were verified against a live TLDR
+edition; stages needing API keys or publication remain written-but-unrun.
 
 | Milestone | Code | Verified |
 |---|---|---|
 | M1 Parser | done | **verified live** — 14 items parsed, 3 sponsors dropped, real fixture committed |
-| M2 Enrichment | done | fallback path proven (0% network, 0 items lost); no real success rate measured |
+| M2 Enrichment | done | **verified live** — 12/14 enriched (85.7%); 2 clean blurb fallbacks, 0 items lost |
 | M3 Script | done | prompt + response parsing tested; **no episode has been read** |
 | M4 Audio | done | PCM math and ffmpeg argv tested; **ffmpeg never invoked, nothing listened to** |
 | M5 Publish | done | feed generation and retention tested; **never uploaded to R2** |
@@ -27,6 +26,11 @@ support both shapes. `tests/fixtures/tldr-2026-08-21.html` is the captured real
 edition; all 14 editorial items have blurbs, and all 3 `(Sponsor)` slots plus
 the `mailto:` TLDR hiring item are excluded.
 
+**M2 checkpoint passed on 2026-08-22.** Article extraction succeeded for 12 of
+14 items (85.7%). WSJ returned HTTP 401, and a Register page extracted a related-
+links listing instead of article text; both fell back to their TLDR blurbs with
+`enriched: false`. No item was dropped.
+
 ## Running it
 
 Python 3.11+ is required.
@@ -37,7 +41,7 @@ pip install -r requirements.txt          # ffmpeg must also be on PATH
 
 python main.py --stage parse             # M1: items as JSON, no credentials needed
 python main.py --stage enrich            # M2: adds article text + success rate
-python main.py --stage script            # M3: needs ANTHROPIC_API_KEY
+python main.py --stage script            # M3: needs OPENROUTER_API_KEY
 python main.py --stage audio --no-upload # M4: needs GEMINI_API_KEY + ffmpeg
 python main.py                           # M5/M6: full run, needs R2
 ```
@@ -47,7 +51,7 @@ freshness and idempotency guards, `--no-upload` skips R2 entirely, `--edition ai
 switches newsletters.
 
 ```bash
-pytest -q                                # 112 passing
+pytest -q                                # 117 passing
 ```
 
 ## Pipeline
@@ -70,11 +74,12 @@ word targets, model IDs, thresholds — are all in `src/config.py`.
 ## Secrets
 
 Set as GitHub repository secrets, and in a gitignored local `.env` for
-development (`set -a; source .env; set +a`).
+development. The app loads `.env` automatically; exported environment variables
+win.
 
 | Secret | Needed for | Source |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | M3 | console.anthropic.com |
+| `OPENROUTER_API_KEY` | M3 | openrouter.ai/keys |
 | `GEMINI_API_KEY` | M4 | aistudio.google.com |
 | `R2_ACCOUNT_ID` | M5 | Cloudflare dashboard |
 | `R2_ACCESS_KEY_ID` | M5 | Cloudflare R2 API token |
@@ -83,6 +88,9 @@ development (`set -a; source .env; set +a`).
 | `R2_PUBLIC_BASE_URL` | M5 | the bucket's public hostname |
 | `FEED_TOKEN` | M5 | `openssl rand -hex 16` — self-generated |
 | `ALERT_WEBHOOK_URL` | M6 | Slack / Discord / ntfy |
+
+Script generation defaults to `qwen/qwen3-30b-a3b-instruct-2507` through
+OpenRouter. Override it with `SCRIPT_MODEL`; structured JSON output is required.
 
 `R2_PUBLIC_BASE_URL` is not in the handoff's list. The RSS `<enclosure>` needs an
 absolute, publicly reachable URL for each MP3, and that hostname cannot be
