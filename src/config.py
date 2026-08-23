@@ -20,7 +20,7 @@ EDITION = "tech"  # slug; /api/latest/<edition>. Others: ai, webdev, infosec.
 LATEST_URL = "https://tldr.tech/api/latest/{edition}"
 EDITION_URL = "https://tldr.tech/{edition}/{date}"
 
-# Honest identification, per the handoff. Points at the repo, not a person.
+# Honest identification. Points at the repo, not a person.
 USER_AGENT = (
     "tldr-daily-podcast/0.1 (personal podcast generator; "
     "+https://github.com/nicholas-fierro/tldr-daily-podcast)"
@@ -56,7 +56,7 @@ PAYWALL_MARKERS = (
     "access denied",
 )
 
-# The handoff's M2 checkpoint. Informational: we warn, we never fail on it.
+# Expected enrichment floor. Informational: we warn, we never fail on it.
 ENRICH_TARGET_RATE = 0.65
 
 # --- dedup ----------------------------------------------------------------
@@ -171,6 +171,17 @@ class R2Config:
         return f"{self.public_base_url.rstrip('/')}/{EPISODE_KEY.format(date=date)}"
 
 
+@dataclass(frozen=True)
+class SMTPConfig:
+    host: str
+    port: int
+    username: str
+    password: str
+    sender: str
+    recipient: str
+    use_ssl: bool
+
+
 class MissingCredential(RuntimeError):
     """Raised when a stage is reached without the secrets it needs."""
 
@@ -192,6 +203,31 @@ def r2_config() -> R2Config:
         bucket=_require("R2_BUCKET"),
         public_base_url=_require("R2_PUBLIC_BASE_URL"),
         feed_token=_require("FEED_TOKEN"),
+    )
+
+
+def smtp_config() -> SMTPConfig:
+    raw_port = os.environ.get("SMTP_PORT", "465").strip()
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise MissingCredential("SMTP_PORT must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise MissingCredential("SMTP_PORT must be between 1 and 65535")
+
+    raw_ssl = os.environ.get("SMTP_USE_SSL", "true").strip().lower()
+    if raw_ssl not in {"true", "false"}:
+        raise MissingCredential("SMTP_USE_SSL must be true or false")
+
+    username = _require("SMTP_USERNAME")
+    return SMTPConfig(
+        host=_require("SMTP_HOST"),
+        port=port,
+        username=username,
+        password=_require("SMTP_PASSWORD"),
+        sender=os.environ.get("EMAIL_FROM", "").strip() or username,
+        recipient=_require("EMAIL_TO"),
+        use_ssl=raw_ssl == "true",
     )
 
 

@@ -3,7 +3,7 @@
 Deliberately behind a small interface. If Gemini's voices disappoint, an
 ElevenLabs implementation of TTSProvider is the only thing that has to change.
 
-Two constraints from the handoff shape this module:
+Two constraints from Gemini's own guidance shape this module:
   1. Quality drifts on long outputs, so we render one request per topic
      segment (~60-120s) and concatenate later. Never one 10-minute request.
   2. The model sometimes returns text tokens instead of audio and 500s, so

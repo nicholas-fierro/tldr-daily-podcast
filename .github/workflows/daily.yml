@@ -3,9 +3,8 @@ name: daily episode
 on:
   schedule:
     # UTC only, and Actions cron does not follow DST. These three land safely
-    # after TLDR's 6-7am ET publication window year-round. The freshness guard
-    # and the idempotency check mean only the first run that sees a fresh
-    # edition does any work — the other two exit 0 in seconds.
+    # after TLDR's 6-7am ET publication window year-round. Freshness and
+    # delivery markers mean only the first run with a fresh edition does work.
     - cron: "15 11 * * 1-5"
     - cron: "15 12 * * 1-5"
     - cron: "15 13 * * 1-5"
@@ -23,7 +22,7 @@ on:
         required: false
         default: publish
 
-# Three overlapping triggers must never race each other into a double publish.
+# Three overlapping triggers must never race each other into duplicate delivery.
 concurrency:
   group: daily-episode
   cancel-in-progress: false
@@ -46,8 +45,60 @@ jobs:
       - uses: FedericoCarboni/setup-ffmpeg@v3
         id: ffmpeg
 
-      - name: Run pipeline
-        id: run
+      - name: Resolve email delivery date
+        id: email_key
+        if: vars.ENABLE_R2_PUBLISH != 'true'
+        env:
+          REQUESTED_DATE: ${{ inputs.date }}
+        run: |
+          if [[ -n "$REQUESTED_DATE" ]]; then
+            if [[ ! "$REQUESTED_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "Invalid edition date: $REQUESTED_DATE" >&2
+              exit 2
+            fi
+            edition_date="$REQUESTED_DATE"
+          else
+            edition_date="$(TZ=America/New_York date +%F)"
+          fi
+          echo "date=$edition_date" >> "$GITHUB_OUTPUT"
+
+      - name: Restore email delivery marker
+        id: email_marker_cache
+        if: >-
+          vars.ENABLE_R2_PUBLISH != 'true' &&
+          (github.event_name == 'schedule' || inputs.stage == 'publish')
+        uses: actions/cache/restore@v4
+        with:
+          path: .email-state/sent
+          key: emailed-${{ inputs.edition || 'tech' }}-${{ steps.email_key.outputs.date }}
+
+      - name: Run pipeline and email episode
+        id: email_run
+        if: >-
+          vars.ENABLE_R2_PUBLISH != 'true' &&
+          steps.email_marker_cache.outputs.cache-hit != 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
+          SMTP_USE_SSL: ${{ vars.SMTP_USE_SSL || 'true' }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          python main.py \
+            --edition "${{ inputs.edition || 'tech' }}" \
+            --stage "${{ inputs.stage || 'publish' }}" \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
+            --email \
+            --email-marker .email-state/sent \
+            --verbose
+
+      - name: Run pipeline and publish to R2
+        id: r2_run
+        if: vars.ENABLE_R2_PUBLISH == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -65,8 +116,27 @@ jobs:
             ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
             --verbose
 
-      # The snapshot is what you read when parsing breaks. Keep it even on
-      # failure — especially on failure.
+      - name: Check email delivery marker
+        id: email_sent
+        if: >-
+          always() &&
+          vars.ENABLE_R2_PUBLISH != 'true' &&
+          steps.email_run.outcome == 'success'
+        run: |
+          if [[ -f .email-state/sent ]]; then
+            echo "sent=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save email delivery marker
+        if: >-
+          steps.email_sent.outputs.sent == 'true' &&
+          steps.email_marker_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .email-state/sent
+          key: emailed-${{ inputs.edition || 'tech' }}-${{ steps.email_key.outputs.date }}
+
+      # Snapshot and script aid debugging. MP3 stays out of Actions artifacts.
       - name: Upload run artifacts
         if: always()
         uses: actions/upload-artifact@v4

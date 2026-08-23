@@ -63,6 +63,7 @@ def command(tmp_path: Path) -> list[str]:
 def test_loudnorm_targets_broadcast_standard(command):
     filters = command[command.index("-af") + 1]
     assert f"I={config.LOUDNORM_TARGET_LUFS}" in filters
+    assert "TP=-4" in filters
     assert "loudnorm" in filters
 
 
@@ -80,7 +81,7 @@ def test_tags_are_passed_as_metadata(command):
     pairs = [command[i + 1] for i, arg in enumerate(command) if arg == "-metadata"]
     assert "title=TLDR Daily — 2026-08-20" in pairs
     assert f"album={config.PODCAST_TITLE}" in pairs
-    assert "date=2026" in pairs
+    assert "date=2026-08-20" in pairs
 
 
 def test_empty_tags_are_omitted(tmp_path: Path):
@@ -99,3 +100,7 @@ def test_headline_falls_back_when_absent():
     assert audio.episode_tags("2026-08-20", "")["title"] == (
         f"{config.PODCAST_TITLE} — 2026-08-20"
     )
+
+
+def test_episode_tag_preserves_full_date():
+    assert audio.episode_tags("2026-08-20", "Headline")["date"] == "2026-08-20"

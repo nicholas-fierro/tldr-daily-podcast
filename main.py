@@ -5,9 +5,10 @@
     python main.py --date 2026-08-20    # re-run a past edition
     python main.py --stage parse        # stop after a stage and print the result
     python main.py --stage enrich --force        # M2, no R2 credentials
+    python main.py --email                       # generate and email the MP3
 
-Stages run in order and each one stops after the named step, which is how the
-milestones in docs/HANDOFF.md are meant to be driven.
+Stages run in order and each one stops after the named step. See README.md for
+the full flag reference and the delivery modes.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from src import audio, config, enrich, fetch, parse, publish, script, state, tts
+from src import audio, config, email_delivery, enrich, fetch, parse, publish, script, state, tts
 
 log = logging.getLogger("tldr")
 
@@ -38,6 +39,14 @@ def _setup_logging(verbose: bool) -> None:
 
 def _stage_index(name: str) -> int:
     return STAGES.index(name)
+
+
+def _write_email_marker(path: str | None, date: str) -> None:
+    if not path:
+        return
+    marker = Path(path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"{date}\n", encoding="utf-8")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -69,7 +78,8 @@ def run(args: argparse.Namespace) -> int:
 
     # R2 is part of publishing, not local milestone checkpoints.
     client = cfg = None
-    if stop_after == _stage_index("publish") and not args.no_upload:
+    seen: dict[str, str] = {}
+    if stop_after == _stage_index("publish") and not args.no_upload and not args.email:
         cfg = config.r2_config()
         client = publish.r2_client(cfg)
 
@@ -105,7 +115,7 @@ def run(args: argparse.Namespace) -> int:
     script_path = workdir / f"{edition.date}.script.json"
     script_path.write_text(json.dumps(episode_script.to_dict(), indent=2), encoding="utf-8")
     log.info("script saved to %s", script_path)
-    if client:
+    if client and cfg:
         publish.upload(client, cfg, config.SCRIPT_KEY.format(date=edition.date),
                        script_path.read_bytes(), "application/json")
     if stop_after == _stage_index("script"):
@@ -121,7 +131,18 @@ def run(args: argparse.Namespace) -> int:
                           "segments": len(rendered)}, indent=2))
         return 0
 
+    if args.email:
+        email_delivery.send_episode(
+            mp3, edition.date, headline, config.smtp_config()
+        )
+        _write_email_marker(args.email_marker, edition.date)
+        print(json.dumps({"mp3": str(mp3), "duration_s": round(duration, 1),
+                          "segments": len(rendered), "delivery": "email"}, indent=2))
+        return 0
+
     # --- publish ---
+    if client is None or cfg is None:
+        raise publish.PublishError("R2 publishing was not initialized")
     _, size = publish.upload_episode(client, cfg, mp3, edition.date)
     episode = publish.Episode(
         date=edition.date,
@@ -152,8 +173,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="stop after this stage and print its output")
     parser.add_argument("--local", default="out",
                         help="working directory for intermediate files")
-    parser.add_argument("--no-upload", action="store_true",
-                        help="skip all R2 access; implies no idempotency or dedup")
+    delivery = parser.add_mutually_exclusive_group()
+    delivery.add_argument("--no-upload", action="store_true",
+                          help="generate locally without R2 or email delivery")
+    delivery.add_argument("--email", action="store_true",
+                          help="email the MP3 instead of publishing to R2")
+    parser.add_argument("--email-marker",
+                        help="write this file only after successful email delivery")
     parser.add_argument("--force", action="store_true",
                         help="ignore the freshness guard and the idempotency check")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -166,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", exc)
         return 2
     except (fetch.FetchError, parse.ParseError, script.ScriptError,
-            tts.TTSError, audio.AudioError, publish.PublishError) as exc:
+            tts.TTSError, audio.AudioError, publish.PublishError,
+            email_delivery.EmailDeliveryError) as exc:
         log.error("%s: %s", type(exc).__name__, exc)
         return 1
 

@@ -57,7 +57,7 @@ def build_ffmpeg_command(source: Path, destination: Path, tags: dict[str, str]) 
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(source),
-        "-af", f"loudnorm=I={config.LOUDNORM_TARGET_LUFS}:TP=-1.5:LRA=11",
+        "-af", f"loudnorm=I={config.LOUDNORM_TARGET_LUFS}:TP=-4:LRA=11",
         "-ac", "1",
         "-b:a", config.MP3_BITRATE,
         "-codec:a", "libmp3lame",
@@ -74,7 +74,7 @@ def episode_tags(date: str, headline: str) -> dict[str, str]:
         "title": headline or f"{config.PODCAST_TITLE} — {date}",
         "artist": config.PODCAST_AUTHOR,
         "album": config.PODCAST_TITLE,
-        "date": date[:4],
+        "date": date,
         "genre": "Podcast",
         "comment": f"TLDR tech, {date}",
     }
