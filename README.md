@@ -428,9 +428,10 @@ deep links beyond the description list, any web UI.
 
 ### Known gaps
 
-* `src/config.py` pins `gemini-2.5-flash-preview-tts` and voices `Kore` / `Puck`.
-  All three were confirmed on 2026-08-22 — the model against a live `models.list`
-  call, the voices by rendering 7/7 segments with them. **Model IDs still churn,
+* `src/config.py` pins `gemini-2.5-flash-preview-tts` and voices `Kore` / `Algenib`.
+  `Kore` and prior default `Puck` were rendered successfully on 2026-08-22.
+  `Algenib` is listed in Gemini's current voice library but has not yet been rendered
+  by this project. **Model IDs still churn,
   and this one is a `-preview-` ID**, so re-check before assuming it works, and
   override with `TTS_MODEL` / `TTS_VOICE_A` / `TTS_VOICE_B` rather than editing
   the file.

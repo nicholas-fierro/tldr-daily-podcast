@@ -102,7 +102,7 @@ WORD_HARD_MAX = 1_700
 TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.5-flash-preview-tts")
 
 TTS_VOICE_A = os.environ.get("TTS_VOICE_A", "Kore")
-TTS_VOICE_B = os.environ.get("TTS_VOICE_B", "Puck")
+TTS_VOICE_B = os.environ.get("TTS_VOICE_B", "Algenib")
 
 # Prefixed to every request so tone does not wander between segments.
 TTS_STYLE_DIRECTION = (
