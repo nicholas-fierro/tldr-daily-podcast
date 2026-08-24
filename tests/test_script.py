@@ -55,7 +55,9 @@ def test_system_prompt_states_the_hard_constraints():
     assert str(config.WORD_TARGET_MIN) in prompt and str(config.WORD_TARGET_MAX) in prompt
     assert config.HOST_A in prompt and config.HOST_B in prompt
     assert "enriched=false" in prompt          # the hedging rule
-    assert "Cold open" in prompt               # no throat-clearing
+    assert "welcome the listener back" in prompt
+    assert "edition date supplied" in prompt
+    assert "sign-off" in prompt
     assert "omit weak items" in prompt         # permission to cut
 
 

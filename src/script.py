@@ -87,8 +87,11 @@ WEIGHTING. Weight by substance. A major acquisition or a real technical result e
 60-90 seconds. A minor item earns one sentence. You are explicitly authorized to omit \
 weak items entirely — a tighter episode is a better episode. Do not give every item a turn.
 
-OPENING. Cold open on the day's single biggest story. No "welcome back", no "on today's \
-episode", no throat-clearing of any kind. The first sentence should be about the news.
+OPENING. Start the opening segment with a brief, natural two- or three-sentence \
+welcome from one host: welcome the listener back to TLDR Daily, state the edition date \
+supplied in the input, then move directly to the day's single biggest story. Keep it \
+concise and do not preview stories covered later. The rest of the opening segment covers \
+that story.
 
 CONFIDENCE. Items marked enriched=false are ones where only the newsletter's one-line \
 summary was available — the full article could not be read. For these, hedge naturally \
@@ -109,7 +112,9 @@ invent a listener email, a sponsor, or a segment that does not exist. Do not rea
 FORMATTING. No stage directions, no [laughs], no sound or music cues, no emoji, no \
 markdown. Plain spoken sentences only — every character you write will be read aloud.
 
-CLOSING. End on the last story or a one-line sign-off. No calls to action, no "subscribe".
+CLOSING. After the last story, add one or two brief, natural sign-off lines wishing \
+the listener a good rest of their day. No calls to action, no "subscribe", and no new \
+news or factual claims.
 
 Return ONLY a JSON object, no prose around it, in exactly this shape:
 
