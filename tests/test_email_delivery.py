@@ -69,8 +69,9 @@ def test_ssl_delivery_attaches_mp3(monkeypatch, tmp_path):
     email_delivery.send_episode(
         mp3,
         "2026-08-21",
-        "TLDR Daily — 2026-08-21",
+        "TLDR Daily AI — 2026-08-21",
         smtp_config(recipient="one@example.com, two@example.com"),
+        edition="ai",
     )
 
     server = created[0]
@@ -79,7 +80,8 @@ def test_ssl_delivery_attaches_mp3(monkeypatch, tmp_path):
     assert server.login_args == ("sender@example.com", "secret")
     assert server.from_addr == "podcast@example.com"
     assert server.to_addrs == ["one@example.com", "two@example.com"]
-    assert server.message["Subject"] == "TLDR Daily — 2026-08-21"
+    assert server.message["Subject"] == "TLDR Daily AI — 2026-08-21"
+    assert "TLDR AI podcast episode" in server.message.get_body().get_content()
     attachment = next(server.message.iter_attachments())
     assert attachment.get_content_type() == "audio/mpeg"
     assert attachment.get_filename() == "episode.mp3"

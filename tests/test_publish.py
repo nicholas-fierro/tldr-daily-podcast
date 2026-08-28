@@ -17,15 +17,15 @@ CFG = R2Config(
 )
 
 
-def episode(date="2026-08-20", **kwargs) -> publish.Episode:
+def episode(date="2026-08-20", edition="tech", **kwargs) -> publish.Episode:
     defaults = dict(
-        title=f"TLDR Daily — {date}",
-        url=f"https://media.example.com/episodes/{date}.mp3",
+        title=f"TLDR Daily {edition.upper()} — {date}",
+        url=f"https://media.example.com/episodes/{edition}/{date}.mp3",
         size_bytes=5_012_345,
         duration_s=612.4,
         description="Today's stories:\n\nA Story\nhttps://e.com/a",
     )
-    return publish.Episode(date=date, **{**defaults, **kwargs})
+    return publish.Episode(edition=edition, date=date, **{**defaults, **kwargs})
 
 
 @pytest.fixture
@@ -76,8 +76,19 @@ def test_newest_episode_is_first(feed):
 
 def test_guids_are_stable_and_unique(feed):
     guids = [item.find("guid").text for item in feed.findall("channel/item")]
-    assert guids == ["tldr-daily-2026-08-20", "tldr-daily-2026-08-18"]
+    assert guids == [
+        "tldr-daily-tech-2026-08-20",
+        "tldr-daily-tech-2026-08-18",
+    ]
     assert len(set(guids)) == 2
+
+
+def test_guids_are_unique_across_editions_on_the_same_date():
+    episodes = [episode(edition="tech"), episode(edition="ai")]
+    assert {item.guid for item in episodes} == {
+        "tldr-daily-tech-2026-08-20",
+        "tldr-daily-ai-2026-08-20",
+    }
 
 
 def test_guid_is_not_a_permalink(feed):
@@ -140,6 +151,27 @@ def test_feed_url_joins_cleanly():
     assert cfg.feed_url == "https://media.example.com/feed-tok.xml"
 
 
+def test_episode_url_contains_edition_and_date():
+    assert CFG.episode_url("ai", "2026-08-20") == (
+        "https://media.example.com/episodes/ai/2026-08-20.mp3"
+    )
+
+
+def test_persistent_object_keys_are_edition_scoped():
+    assert config.EPISODE_KEY.format(edition="ai", date="2026-08-20") == (
+        "episodes/ai/2026-08-20.mp3"
+    )
+    assert config.SCRIPT_KEY.format(edition="ai", date="2026-08-20") == (
+        "scripts/ai/2026-08-20.json"
+    )
+    assert config.SNAPSHOT_KEY.format(edition="ai", date="2026-08-20") == (
+        "snapshots/ai/2026-08-20.html"
+    )
+    assert publish.META_KEY.format(edition="ai", date="2026-08-20") == (
+        "meta/ai/2026-08-20.json"
+    )
+
+
 def test_empty_feed_is_still_valid():
     parsed = ElementTree.fromstring(publish.build_feed([], CFG))
     assert parsed.findall("channel/item") == []
@@ -153,22 +185,27 @@ class FakeClient:
         self.deleted = []
 
     def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
-        return {"Contents": [{"Key": k} for k in self.keys], "IsTruncated": False}
+        return {
+            "Contents": [{"Key": key} for key in self.keys if key.startswith(Prefix)],
+            "IsTruncated": False,
+        }
 
     def delete_object(self, Bucket, Key):
         self.deleted.append(Key)
 
 
-def test_prune_keeps_the_newest_n():
-    keys = [f"episodes/2026-07-{day:02d}.mp3" for day in range(1, 21)]
+def test_prune_keeps_the_newest_n_per_edition():
+    keys = [f"episodes/tech/2026-07-{day:02d}.mp3" for day in range(1, 21)]
+    keys += ["episodes/ai/2026-07-01.mp3"]
     client = FakeClient(keys)
-    publish.prune_old_episodes(client, CFG, keep=5)
+    publish.prune_old_episodes(client, CFG, "tech", keep=5)
     assert len(client.deleted) == 15
-    assert "episodes/2026-07-20.mp3" not in client.deleted
-    assert "episodes/2026-07-01.mp3" in client.deleted
+    assert "episodes/tech/2026-07-20.mp3" not in client.deleted
+    assert "episodes/tech/2026-07-01.mp3" in client.deleted
+    assert "episodes/ai/2026-07-01.mp3" not in client.deleted
 
 
 def test_prune_is_a_noop_under_the_limit():
-    client = FakeClient(["episodes/2026-07-01.mp3"])
-    publish.prune_old_episodes(client, CFG, keep=30)
+    client = FakeClient(["episodes/tech/2026-07-01.mp3"])
+    publish.prune_old_episodes(client, CFG, "tech", keep=30)
     assert client.deleted == []

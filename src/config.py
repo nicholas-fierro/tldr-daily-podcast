@@ -19,6 +19,7 @@ load_dotenv(override=False)
 EDITION = "tech"  # slug; /api/latest/<edition>. Others: ai, webdev, infosec.
 LATEST_URL = "https://tldr.tech/api/latest/{edition}"
 EDITION_URL = "https://tldr.tech/{edition}/{date}"
+EDITION_MAX_AGE_DAYS = 3
 
 # Honest identification. Points at the repo, not a person.
 USER_AGENT = (
@@ -61,7 +62,7 @@ ENRICH_TARGET_RATE = 0.65
 
 # --- dedup ----------------------------------------------------------------
 
-DEDUP_STATE_KEY = "state/seen-urls.json"
+DEDUP_STATE_KEY = "state/{edition}/seen-urls.json"
 DEDUP_RETAIN_DAYS = 7  # how much history we keep
 DEDUP_WINDOW_DAYS = 3  # how far back a repeat suppresses an item
 
@@ -131,16 +132,16 @@ DURATION_MAX_S = 12 * 60
 PODCAST_TITLE = "TLDR Daily"
 PODCAST_AUTHOR = "TLDR Daily (generated)"
 PODCAST_DESCRIPTION = (
-    "A daily two-host briefing on the TLDR tech newsletter, built from the "
-    "linked articles rather than the summaries."
+    "Two-host briefings from TLDR newsletters, built from the linked articles "
+    "rather than the summaries."
 )
 PODCAST_LANGUAGE = "en-us"
 
 # --- publish --------------------------------------------------------------
 
-EPISODE_KEY = "episodes/{date}.mp3"
-SCRIPT_KEY = "scripts/{date}.json"
-SNAPSHOT_KEY = "snapshots/{date}.html"
+EPISODE_KEY = "episodes/{edition}/{date}.mp3"
+SCRIPT_KEY = "scripts/{edition}/{date}.json"
+SNAPSHOT_KEY = "snapshots/{edition}/{date}.html"
 RETAIN_EPISODES = 30
 
 
@@ -167,8 +168,9 @@ class R2Config:
     def feed_url(self) -> str:
         return f"{self.public_base_url.rstrip('/')}/{self.feed_key}"
 
-    def episode_url(self, date: str) -> str:
-        return f"{self.public_base_url.rstrip('/')}/{EPISODE_KEY.format(date=date)}"
+    def episode_url(self, edition: str, date: str) -> str:
+        key = EPISODE_KEY.format(edition=edition, date=date)
+        return f"{self.public_base_url.rstrip('/')}/{key}"
 
 
 @dataclass(frozen=True)

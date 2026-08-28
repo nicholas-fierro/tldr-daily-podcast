@@ -12,8 +12,8 @@ def workflow_text() -> str:
 
 def test_r2_delivery_requires_explicit_true_variable():
     text = workflow_text()
-    assert "if: vars.ENABLE_R2_PUBLISH == 'true'" in text
-    assert "if: vars.ENABLE_R2_PUBLISH != 'true'" in text
+    assert "vars.ENABLE_R2_PUBLISH == 'true'" in text
+    assert "vars.ENABLE_R2_PUBLISH != 'true'" in text
 
 
 def test_email_step_has_no_r2_credentials():
@@ -27,11 +27,39 @@ def test_email_step_has_no_r2_credentials():
     assert "FEED_TOKEN" not in email_step
 
 
-def test_email_delivery_uses_persistent_daily_marker():
+def test_email_delivery_marker_uses_actual_edition_identity():
     text = workflow_text()
     assert "uses: actions/cache/restore@v4" in text
     assert "uses: actions/cache/save@v4" in text
-    assert "--email-marker .email-state/sent" in text
+    assert "https://tldr.tech/api/latest/$EDITION" in text
+    assert "key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}" in text
+    assert '--email-marker "${{ steps.edition_key.outputs.marker }}"' in text
+    assert "format('--resolved-date {0}', steps.edition_key.outputs.date)" in text
+
+
+def test_scheduled_runs_fan_out_and_concurrency_is_per_edition():
+    text = workflow_text()
+    assert '["tech","ai","webdev","infosec"]' in text
+    assert "group: daily-episode-${{ matrix.edition }}" in text
+    assert "group: daily-episode\n" not in text
+
+
+def test_delivery_marker_guard_runs_before_dependency_setup():
+    text = workflow_text()
+    assert text.index("- name: Restore email delivery marker") < text.index(
+        "uses: actions/checkout@v4"
+    )
+    assert text.index("- name: Decide whether work is needed") < text.index(
+        "uses: actions/setup-python@v5"
+    )
+
+
+def test_ffmpeg_uses_runner_or_retried_ubuntu_package():
+    text = workflow_text()
+    assert "FedericoCarboni/setup-ffmpeg" not in text
+    assert "command -v ffmpeg" in text
+    assert "sudo apt-get install -y ffmpeg" in text
+    assert "for attempt in 1 2 3" in text
 
 
 def test_mp3_is_not_uploaded_as_action_artifact():

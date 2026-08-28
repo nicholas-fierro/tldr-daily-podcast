@@ -41,12 +41,12 @@ def _stage_index(name: str) -> int:
     return STAGES.index(name)
 
 
-def _write_email_marker(path: str | None, date: str) -> None:
+def _write_email_marker(path: str | None, edition: str, date: str) -> None:
     if not path:
         return
     marker = Path(path)
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"{date}\n", encoding="utf-8")
+    marker.write_text(f"{edition}:{date}\n", encoding="utf-8")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -55,19 +55,46 @@ def run(args: argparse.Namespace) -> int:
     workdir.mkdir(parents=True, exist_ok=True)
 
     # --- fetch ---
-    edition = fetch.fetch_edition(edition=args.edition, date=args.date)
-    log.info("edition %s -> %s", edition.date, edition.url)
-    (workdir / f"{edition.date}.html").write_text(edition.html, encoding="utf-8")
+    resolved_date = getattr(args, "resolved_date", None)
+    edition = fetch.fetch_edition(
+        edition=args.edition,
+        date=args.date or resolved_date,
+    )
+    identity = f"{edition.edition}-{edition.date}"
+    log.info("edition %s/%s -> %s", edition.edition, edition.date, edition.url)
+    (workdir / f"{identity}.html").write_text(edition.html, encoding="utf-8")
 
-    # The freshness guard: a stale edition means today's has not published yet.
-    if not args.date and not args.force and not state.is_fresh(edition.date):
-        log.info("latest edition is %s, not today (%s) — nothing to do",
-                 edition.date, state.today_in_league_tz())
+    if not args.date and not args.force and not state.is_recent(edition.date):
+        log.info(
+            "latest %s edition is %s, outside the %d-day lookback ending %s — nothing to do",
+            edition.edition,
+            edition.date,
+            config.EDITION_MAX_AGE_DAYS,
+            state.today_in_league_tz(),
+        )
         return 0
 
+    client = cfg = None
+    seen: dict[str, str] = {}
+    if stop_after == _stage_index("publish") and not args.no_upload and not args.email:
+        cfg = config.r2_config()
+        client = publish.r2_client(cfg)
+        if state.episode_exists(
+            client,
+            cfg.bucket,
+            edition.edition,
+            edition.date,
+        ) and not args.force:
+            log.info("episode for %s already exists — exiting", identity)
+            return 0
+
     if stop_after == _stage_index("fetch"):
-        print(json.dumps({"date": edition.date, "url": edition.url,
-                          "bytes": len(edition.html)}, indent=2))
+        print(json.dumps({
+            "edition": edition.edition,
+            "date": edition.date,
+            "url": edition.url,
+            "bytes": len(edition.html),
+        }, indent=2))
         return 0
 
     # --- parse ---
@@ -76,33 +103,31 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps([item.to_dict() for item in items], indent=2))
         return 0
 
-    # R2 is part of publishing, not local milestone checkpoints.
-    client = cfg = None
-    seen: dict[str, str] = {}
-    if stop_after == _stage_index("publish") and not args.no_upload and not args.email:
-        cfg = config.r2_config()
-        client = publish.r2_client(cfg)
-
-        # Idempotency: the first real action of every run.
-        if state.episode_exists(client, cfg.bucket, edition.date) and not args.force:
-            log.info("episode for %s already exists — exiting", edition.date)
-            return 0
-
-        publish.upload(client, cfg, config.SNAPSHOT_KEY.format(date=edition.date),
-                       edition.html.encode("utf-8"), "text/html")
-
-        seen = state.load_seen(client, cfg.bucket)
+    if client and cfg:
+        publish.upload(
+            client,
+            cfg,
+            config.SNAPSHOT_KEY.format(edition=edition.edition, date=edition.date),
+            edition.html.encode("utf-8"),
+            "text/html",
+        )
+        seen = state.load_seen(client, cfg.bucket, edition.edition)
         today = datetime.strptime(edition.date, "%Y-%m-%d").date()
         items, dropped = state.filter_recent_duplicates(items, seen, today)
         if dropped:
-            log.info("dropped %d repeat(s) from the last %d days",
-                     len(dropped), config.DEDUP_WINDOW_DAYS)
+            log.info(
+                "dropped %d repeat(s) from the last %d days",
+                len(dropped),
+                config.DEDUP_WINDOW_DAYS,
+            )
 
     # --- enrich ---
     items = enrich.enrich_items(items)
     rate = enrich.enrichment_rate(items)
     if stop_after == _stage_index("enrich"):
         print(json.dumps({
+            "edition": edition.edition,
+            "date": edition.date,
             "enrichment_rate": round(rate, 3),
             "enriched": sum(i.enriched for i in items),
             "total": len(items),
@@ -111,55 +136,102 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     # --- script ---
-    episode_script = script.generate_script(items, edition.date)
-    script_path = workdir / f"{edition.date}.script.json"
+    episode_script = script.generate_script(
+        items,
+        edition.date,
+        edition=edition.edition,
+    )
+    script_path = workdir / f"{identity}.script.json"
     script_path.write_text(json.dumps(episode_script.to_dict(), indent=2), encoding="utf-8")
     log.info("script saved to %s", script_path)
     if client and cfg:
-        publish.upload(client, cfg, config.SCRIPT_KEY.format(date=edition.date),
-                       script_path.read_bytes(), "application/json")
+        publish.upload(
+            client,
+            cfg,
+            config.SCRIPT_KEY.format(edition=edition.edition, date=edition.date),
+            script_path.read_bytes(),
+            "application/json",
+        )
     if stop_after == _stage_index("script"):
         print(script_path.read_text())
         return 0
 
     # --- audio ---
     rendered = tts.render_segments(episode_script, tts.GeminiTTS())
-    headline = f"{config.PODCAST_TITLE} — {edition.date}"
-    mp3, duration = audio.build_episode(rendered, edition.date, headline, workdir)
+    headline = f"{config.PODCAST_TITLE} {edition.edition.upper()} — {edition.date}"
+    mp3, duration = audio.build_episode(
+        rendered,
+        edition.date,
+        headline,
+        workdir,
+        edition=edition.edition,
+    )
     if stop_after == _stage_index("audio") or args.no_upload:
-        print(json.dumps({"mp3": str(mp3), "duration_s": round(duration, 1),
-                          "segments": len(rendered)}, indent=2))
+        print(json.dumps({
+            "edition": edition.edition,
+            "date": edition.date,
+            "mp3": str(mp3),
+            "duration_s": round(duration, 1),
+            "segments": len(rendered),
+        }, indent=2))
         return 0
 
     if args.email:
         email_delivery.send_episode(
-            mp3, edition.date, headline, config.smtp_config()
+            mp3,
+            edition.date,
+            headline,
+            config.smtp_config(),
+            edition=edition.edition,
         )
-        _write_email_marker(args.email_marker, edition.date)
-        print(json.dumps({"mp3": str(mp3), "duration_s": round(duration, 1),
-                          "segments": len(rendered), "delivery": "email"}, indent=2))
+        _write_email_marker(args.email_marker, edition.edition, edition.date)
+        print(json.dumps({
+            "edition": edition.edition,
+            "date": edition.date,
+            "mp3": str(mp3),
+            "duration_s": round(duration, 1),
+            "segments": len(rendered),
+            "delivery": "email",
+        }, indent=2))
         return 0
 
     # --- publish ---
     if client is None or cfg is None:
         raise publish.PublishError("R2 publishing was not initialized")
-    _, size = publish.upload_episode(client, cfg, mp3, edition.date)
+    _, size = publish.upload_episode(
+        client,
+        cfg,
+        mp3,
+        edition.edition,
+        edition.date,
+    )
     episode = publish.Episode(
+        edition=edition.edition,
         date=edition.date,
         title=headline,
-        url=cfg.episode_url(edition.date),
+        url=cfg.episode_url(edition.edition, edition.date),
         size_bytes=size,
         duration_s=duration,
         description=publish.build_description(items),
     )
     publish.save_episode_meta(client, cfg, episode)
-    publish.prune_old_episodes(client, cfg)
-    feed_url = publish.publish_feed(client, cfg, publish.load_all_episode_meta(client, cfg))
+    publish.prune_old_episodes(client, cfg, edition.edition)
+    feed_url = publish.publish_feed(
+        client,
+        cfg,
+        publish.load_all_episode_meta(client, cfg),
+    )
 
     today = datetime.strptime(edition.date, "%Y-%m-%d").date()
-    state.save_seen(client, cfg.bucket, state.record_seen(seen, items, today), today)
+    state.save_seen(
+        client,
+        cfg.bucket,
+        edition.edition,
+        state.record_seen(seen, items, today),
+        today,
+    )
 
-    log.info("published %s (%.1f min) -> %s", edition.date, duration / 60, feed_url)
+    log.info("published %s (%.1f min) -> %s", identity, duration / 60, feed_url)
     return 0
 
 
@@ -167,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--date", help="YYYY-MM-DD; re-run a past edition")
+    parser.add_argument(
+        "--resolved-date",
+        help="CI-resolved latest date; unlike --date, recency still applies",
+    )
     parser.add_argument("--edition", default=config.EDITION,
                         help="TLDR edition slug (tech, ai, webdev, infosec)")
     parser.add_argument("--stage", default="publish", choices=STAGES,
@@ -181,9 +257,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--email-marker",
                         help="write this file only after successful email delivery")
     parser.add_argument("--force", action="store_true",
-                        help="ignore the freshness guard and the idempotency check")
+                        help="ignore the recency guard and the idempotency check")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.date and args.resolved_date:
+        parser.error("--date and --resolved-date are mutually exclusive")
 
     _setup_logging(args.verbose)
     try:

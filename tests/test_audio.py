@@ -97,10 +97,39 @@ def test_output_path_is_last(command):
 
 
 def test_headline_falls_back_when_absent():
-    assert audio.episode_tags("2026-08-20", "")["title"] == (
-        f"{config.PODCAST_TITLE} — 2026-08-20"
+    assert audio.episode_tags("2026-08-20", "", "ai")["title"] == (
+        f"{config.PODCAST_TITLE} AI — 2026-08-20"
     )
 
 
 def test_episode_tag_preserves_full_date():
     assert audio.episode_tags("2026-08-20", "Headline")["date"] == "2026-08-20"
+
+
+def test_episode_tags_include_edition():
+    tags = audio.episode_tags("2026-08-20", "Headline", "webdev")
+    assert tags["comment"] == "TLDR WEBDEV, 2026-08-20"
+
+
+def test_build_episode_uses_edition_and_date_filename(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        Path(command[-1]).write_bytes(b"mp3")
+        return Result()
+
+    monkeypatch.setattr(audio.subprocess, "run", fake_run)
+    monkeypatch.setattr(audio, "probe_duration", lambda path: 600.0)
+
+    mp3, _ = audio.build_episode(
+        [segment()],
+        "2026-08-20",
+        "TLDR Daily AI — 2026-08-20",
+        tmp_path,
+        edition="ai",
+    )
+
+    assert mp3.name == "ai-2026-08-20.mp3"
+    assert (tmp_path / "ai-2026-08-20.wav").exists()

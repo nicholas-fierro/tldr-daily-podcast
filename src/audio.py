@@ -69,14 +69,19 @@ def build_ffmpeg_command(source: Path, destination: Path, tags: dict[str, str]) 
     return command
 
 
-def episode_tags(date: str, headline: str) -> dict[str, str]:
+def episode_tags(
+    date: str,
+    headline: str,
+    edition: str = config.EDITION,
+) -> dict[str, str]:
+    edition_name = edition.upper()
     return {
-        "title": headline or f"{config.PODCAST_TITLE} — {date}",
+        "title": headline or f"{config.PODCAST_TITLE} {edition_name} — {date}",
         "artist": config.PODCAST_AUTHOR,
         "album": config.PODCAST_TITLE,
         "date": date,
         "genre": "Podcast",
-        "comment": f"TLDR tech, {date}",
+        "comment": f"TLDR {edition_name}, {date}",
     }
 
 
@@ -93,14 +98,23 @@ def probe_duration(path: Path) -> float:
 
 
 def build_episode(
-    segments: list[RenderedSegment], date: str, headline: str, workdir: Path
+    segments: list[RenderedSegment],
+    date: str,
+    headline: str,
+    workdir: Path,
+    edition: str = config.EDITION,
 ) -> tuple[Path, float]:
     """PCM segments -> normalized, tagged MP3. Returns (path, duration_seconds)."""
     workdir.mkdir(parents=True, exist_ok=True)
-    joined_wav = write_wav(concat_pcm(segments), workdir / f"{date}.wav")
-    mp3 = workdir / f"{date}.mp3"
+    identity = f"{edition}-{date}"
+    joined_wav = write_wav(concat_pcm(segments), workdir / f"{identity}.wav")
+    mp3 = workdir / f"{identity}.mp3"
 
-    command = build_ffmpeg_command(joined_wav, mp3, episode_tags(date, headline))
+    command = build_ffmpeg_command(
+        joined_wav,
+        mp3,
+        episode_tags(date, headline, edition),
+    )
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0 or not mp3.exists():
         raise AudioError(f"ffmpeg failed: {result.stderr.strip()}")

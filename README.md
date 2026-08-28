@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 132 passing][tests-shield]][tests-url]
+[![Tests: 145 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -11,8 +11,8 @@
   <h1 align="center">TLDR Daily Podcast</h1>
 
   <p align="center">
-    Every weekday morning, a ~10-minute two-host audio briefing of that day's
-    TLDR tech newsletter — built from the <em>linked articles</em>, not the blurbs.
+    Two-host audio briefings for new TLDR Tech, AI, Web Dev, and InfoSec editions —
+    built from the <em>linked articles</em>, not the blurbs.
     <br />
     <a href="#how-it-works"><strong>How it works »</strong></a>
     <br />
@@ -67,10 +67,11 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-[TLDR](https://tldr.tech/tech) publishes a tech newsletter every weekday morning.
-Reading it takes ten minutes you don't always have; listening to it does not.
+[TLDR](https://tldr.tech/tech) publishes Tech, AI, Web Dev, and InfoSec newsletters
+on their own schedules. Reading them takes time you don't always have; listening
+does not.
 
-This repository is the automation that turns each edition into a podcast episode.
+This repository is the automation that turns each new edition into a podcast episode.
 It scrapes the day's edition, follows every link and reads the **actual articles**,
 has an LLM write a two-host dialogue grounded in that text, voices it with
 multi-speaker TTS, and delivers the finished MP3.
@@ -102,9 +103,10 @@ Two properties matter more than anything else here:
 ### How It Works
 
 ```
-cron (3× weekday mornings, UTC)
- └─ fetch      /api/latest/<edition> → raw HTML + edition date from the redirect
-     └─ guard  edition stale? → exit 0. already delivered? → exit 0.
+cron (3× weekday mornings, UTC × 4 editions)
+ └─ resolve    /api/latest/<edition> → actual edition date → delivery-marker guard
+     └─ fetch      raw HTML + edition date from the redirect
+         └─ guard  outside lookback? → exit 0. already delivered? → exit 0.
          └─ parse   → [{section, title, url, blurb, read_time}], sponsors dropped
              └─ dedup    → suppress URLs seen in the last 3 days
                  └─ enrich   → concurrent article fetch + Trafilatura text (best-effort)
@@ -164,7 +166,7 @@ environment and are never defaulted to a literal.
 2. Create a virtualenv and install dependencies
    ```sh
    python3.11 -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    ```
 3. Copy the environment template and fill in what the stage you're running needs
    ```sh
@@ -256,24 +258,26 @@ python main.py --email                    # full run, emailed instead; needs SMT
 | `--email` | Send the MP3 as an SMTP attachment. No R2 access at all. |
 | `--no-upload` | Write the MP3 to `--local` and stop. Neither R2 nor email. |
 
-`--email-marker <path>` writes a small file containing the edition date, and
-only after the send succeeds. That marker is how the email path gets its
-idempotency: the R2 path's HEAD-against-the-bucket check isn't available when
-R2 is skipped, so CI caches the marker under a per-edition-per-date key instead.
+`--email-marker <path>` writes the edition slug and actual edition date, and only
+after the send succeeds. That marker is how the email path gets its idempotency:
+CI resolves the newsletter's actual date before setup, then caches the marker as
+`emailed-<edition>-<actual-date>`. This supports newsletters with different
+publication schedules and skips delivered editions before dependency setup.
 See [Scheduling](#scheduling).
 
 ### Flags
 
 | Flag | Effect |
 |---|---|
-| `--date YYYY-MM-DD` | Re-run a past edition. Also bypasses the freshness guard. |
+| `--date YYYY-MM-DD` | Re-run a past edition. Also bypasses the recency guard. |
+| `--resolved-date YYYY-MM-DD` | Pin CI's resolved latest edition while retaining the recency guard. |
 | `--edition <slug>` | `tech` (default), `ai`, `webdev`, `infosec`. |
 | `--stage <name>` | Stop after `fetch`/`parse`/`enrich`/`script`/`audio`/`publish`. |
 | `--local <dir>` | Working directory for intermediate files. Defaults to `out`. |
 | `--no-upload` | Skip all R2 access. Implies no idempotency check and no dedup. |
 | `--email` | Email the MP3 instead of publishing to R2. Also skips dedup and idempotency. |
-| `--email-marker <path>` | Write this file only after a successful send. |
-| `--force` | Ignore both the freshness guard and the idempotency check. |
+| `--email-marker <path>` | Write `<edition>:<actual-date>` only after a successful send. |
+| `--force` | Ignore both the recency guard and the idempotency check. |
 | `-v`, `--verbose` | Debug logging. |
 
 Exit codes: `0` success or a deliberate no-op, `1` a stage failed, `2` a required
@@ -281,23 +285,29 @@ credential was missing.
 
 ### Scheduling
 
-`.github/workflows/daily.yml` fires at 11:15, 12:15, and 13:15 UTC on weekdays,
-plus `workflow_dispatch` with optional date/edition/stage inputs.
+`.github/workflows/daily.yml` fires at 11:15, 12:15, and 13:15 UTC on weekdays.
+Each scheduled trigger fans out across `tech`, `ai`, `webdev`, and `infosec`;
+`workflow_dispatch` runs only its selected edition and accepts optional date and
+stage inputs.
 
 Three triggers rather than one because **GitHub Actions cron is UTC-only, does
-not follow DST, and is not punctual** — 5-30 minute delays are normal. The
-guards make the extra runs free:
+not follow DST, and is not punctual**. GitHub can still drop all scheduled runs;
+the independent fallback design is tracked in [`EXTERNAL_SCHEDULER.md`](EXTERNAL_SCHEDULER.md).
 
-* **Freshness guard** — if the edition date from the redirect isn't today in
-  `America/New_York`, exit 0 without generating.
-* **Idempotency, R2 path** — the first real action of a publishing run is a HEAD
-  against `episodes/YYYY-MM-DD.mp3`. Exists → exit 0.
-* **Idempotency, email path** — the marker written by `--email-marker` is saved
-  to the Actions cache under `emailed-<edition>-<date>`. A cache hit on a later
-  trigger skips the run entirely, so an edition is emailed exactly once.
+Guards make delayed and repeated runs safe:
 
-A `concurrency` group prevents the overlapping triggers from racing into
-duplicate delivery.
+* **Actual-edition resolver** — before checkout or dependency setup, CI follows
+  `/api/latest/<edition>` and extracts the newsletter's real publication date.
+* **Recency guard** — an undelivered latest edition may be up to three days old,
+  which recovers delayed runs and supports newsletters with different cadences.
+* **Idempotency, R2 path** — the first publishing action is a HEAD against
+  `episodes/<edition>/<actual-date>.mp3`. Existing object means exit 0.
+* **Idempotency, email path** — CI restores
+  `emailed-<edition>-<actual-date>` before checkout. A hit skips setup and
+  generation entirely.
+
+Concurrency is scoped by edition. Duplicate runs for one newsletter serialize;
+different newsletters may generate in parallel.
 
 **Which path CI takes is controlled by the `ENABLE_R2_PUBLISH` repository
 variable.** Set it to `true` and the workflow publishes to R2; anything else,
@@ -355,8 +365,9 @@ Consequences worth knowing before you change something:
 * **The TTS layer sits behind a `TTSProvider` protocol** so swapping providers
   is a one-file change. ElevenLabs is the documented fallback if Gemini voice
   quality disappoints.
-* **`--edition` is a parameter everywhere,** even though only `tech` is used in
-  production.
+* **`--edition` is part of every persistent identity.** Scheduled runs cover
+  `tech`, `ai`, `webdev`, and `infosec`; object keys, markers, filenames, feed
+  GUIDs, dedup state, titles, and prompts include the edition.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -378,15 +389,15 @@ Consequences worth knowing before you change something:
 **Never publish silence, a truncated file, or an ad read.**
 
 Every run snapshots the raw HTML. When parsing breaks, you want the input that
-broke it — it's in the workflow artifacts and at `snapshots/YYYY-MM-DD.html`
-in R2.
+broke it — it's in the workflow artifacts and at
+`snapshots/<edition>/YYYY-MM-DD.html` in R2.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- STATUS -->
 ## Status
 
-The full pipeline is written and `pytest` is green at 132 tests. What has and
+The full pipeline is written and `pytest` is green at 145 tests. What has and
 hasn't been exercised against live services:
 
 | Stage | Live verification |
@@ -397,7 +408,7 @@ hasn't been exercised against live services:
 | Audio | **Verified and owner-approved** (2026-08-22) — 7/7 segments rendered, 3.44 MB mono 64kbps MP3, heard end-to-end |
 | Publish (R2) | Feed generation and retention tested in isolation. **Never uploaded to R2.** |
 | Deliver (email) | **Verified live** (2026-08-23) — episode delivered end-to-end as an SMTP attachment |
-| Automate | Workflow parses. **Never run.** |
+| Automate | **Verified live** (2026-08-27) — manual and scheduled runs exercised; GitHub later delayed/dropped cron events, motivating the external fallback design. |
 
 Notes from those runs, worth carrying forward:
 
@@ -484,6 +495,6 @@ Project Link: [https://github.com/nicholas-fierro/tldr-daily-podcast](https://gi
 [workflow-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/actions/workflows/daily.yml
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue?style=for-the-badge
 [python-url]: https://www.python.org/
-[tests-shield]: https://img.shields.io/badge/tests-132%20passing-brightgreen?style=for-the-badge
+[tests-shield]: https://img.shields.io/badge/tests-145%20passing-brightgreen?style=for-the-badge
 [tests-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/tree/main/tests
 [python-badge]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white

@@ -53,6 +53,43 @@ def test_enrich_checkpoint_does_not_require_r2(monkeypatch, tmp_path, capsys):
     assert output["enrichment_rate"] == 0.0
 
 
+def test_ci_resolved_date_is_pinned_without_bypassing_recency(monkeypatch, tmp_path):
+    edition = Edition(
+        date="2026-08-10",
+        url="https://tldr.tech/ai/2026-08-10",
+        html="<html></html>",
+        edition="ai",
+    )
+    fetched = {}
+
+    def fake_fetch(**kwargs):
+        fetched.update(kwargs)
+        return edition
+
+    monkeypatch.setattr(main.fetch, "fetch_edition", fake_fetch)
+    monkeypatch.setattr(main.state, "is_recent", lambda date: False)
+    monkeypatch.setattr(
+        main.parse,
+        "parse_edition",
+        lambda html: pytest.fail("stale resolved edition must stop before parse"),
+    )
+
+    args = Namespace(
+        stage="parse",
+        local=str(tmp_path),
+        edition="ai",
+        date=None,
+        resolved_date="2026-08-10",
+        force=False,
+        no_upload=False,
+        email=False,
+        email_marker=None,
+    )
+
+    assert main.run(args) == 0
+    assert fetched == {"edition": "ai", "date": "2026-08-10"}
+
+
 def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
     edition = Edition(
         date="2026-08-21",
@@ -77,9 +114,9 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
             )
         ],
     )
-    mp3 = tmp_path / f"{edition.date}.mp3"
+    mp3 = tmp_path / f"{edition.edition}-{edition.date}.mp3"
     mp3.write_bytes(b"audio")
-    marker = tmp_path / ".email-state" / "sent"
+    marker = tmp_path / ".email-state" / "tech-2026-08-21.sent"
     smtp = main.config.SMTPConfig(
         host="smtp.example.com",
         port=465,
@@ -95,13 +132,17 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(main.parse, "parse_edition", lambda html: items)
     monkeypatch.setattr(main.enrich, "enrich_items", lambda parsed: parsed)
     monkeypatch.setattr(main.enrich, "enrichment_rate", lambda enriched: 1.0)
-    monkeypatch.setattr(main.script, "generate_script", lambda enriched, date: episode_script)
+    monkeypatch.setattr(
+        main.script,
+        "generate_script",
+        lambda enriched, date, *, edition: episode_script,
+    )
     monkeypatch.setattr(main.tts, "GeminiTTS", lambda: object())
     monkeypatch.setattr(main.tts, "render_segments", lambda generated, provider: [object()])
     monkeypatch.setattr(
         main.audio,
         "build_episode",
-        lambda rendered, date, headline, workdir: (mp3, 430.0),
+        lambda rendered, date, headline, workdir, *, edition: (mp3, 430.0),
     )
     monkeypatch.setattr(main.config, "smtp_config", lambda: smtp)
     monkeypatch.setattr(
@@ -115,8 +156,14 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
         lambda *args, **kwargs: pytest.fail("email delivery must not upload to R2"),
     )
 
-    def capture_delivery(path, date, headline, resolved):
-        delivered.update(path=path, date=date, headline=headline, config=resolved)
+    def capture_delivery(path, date, headline, resolved, *, edition):
+        delivered.update(
+            path=path,
+            date=date,
+            headline=headline,
+            config=resolved,
+            edition=edition,
+        )
 
     monkeypatch.setattr(main.email_delivery, "send_episode", capture_delivery)
 
@@ -134,7 +181,11 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
     assert main.run(args) == 0
     assert delivered["path"] == mp3
     assert delivered["date"] == edition.date
+    assert delivered["edition"] == "tech"
+    assert delivered["headline"] == "TLDR Daily TECH — 2026-08-21"
     assert delivered["config"] == smtp
-    assert marker.read_text(encoding="utf-8") == "2026-08-21\n"
+    assert marker.read_text(encoding="utf-8") == "tech:2026-08-21\n"
+    assert (tmp_path / "tech-2026-08-21.html").exists()
     output = json.loads(capsys.readouterr().out)
+    assert output["edition"] == "tech"
     assert output["delivery"] == "email"

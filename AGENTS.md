@@ -47,9 +47,9 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
   it belongs in config instead.
 - **Keep TTS behind the `TTSProvider` protocol** in `src/tts.py`. Swapping
   providers must remain a one-file change. ElevenLabs is the documented fallback.
-- **`--edition` is a parameter everywhere.** `tech` is the only slug in
-  production, but `ai`, `webdev`, and `infosec` must keep working without a code
-  change.
+- **`--edition` is part of every persistent identity.** Scheduled runs cover
+  `tech`, `ai`, `webdev`, and `infosec`. Object keys, delivery markers, local
+  filenames, feed GUIDs, dedup state, titles, and prompts must stay edition-aware.
 - **Parse structurally, never by CSS class.** TLDR's class names change; its
   document structure is stabler. Both heading/link nestings
   (`<a><h3>…</h3></a>` and `<h3><a>…</a></h3>`) are supported because the live
@@ -60,15 +60,16 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
   (`src/publish.py`) and email (`src/email_delivery.py`) are siblings. Everything
   upstream of them is shared and must stay delivery-agnostic — no `if args.email`
   reaching back into fetch, parse, enrich, script, or audio.
-- **Guards run before work, not after.** The freshness check and the idempotency
-  HEAD are what make three overlapping cron triggers safe.
+- **Guards run before work, not after.** CI resolves each newsletter's actual
+  edition date and restores its email marker before checkout; R2 publishing uses
+  an edition-aware HEAD before parse, enrich, script, or audio work.
 
 ---
 
 ## Testing
 
 ```sh
-pytest -q          # 132 passing as of the last commit
+pytest -q          # 145 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
@@ -94,7 +95,7 @@ pytest -q          # 132 passing as of the last commit
 - **Run the cheap stages first.** `--stage parse` and `--stage enrich` need no
   credentials and cost nothing. Get those right before spending tokens.
 - **Read the snapshot when parsing breaks.** Every run writes the raw HTML to
-  `out/` and to `snapshots/YYYY-MM-DD.html` in R2, and the workflow uploads it on
+  `out/<edition>/` and to `snapshots/<edition>/YYYY-MM-DD.html` in R2, and the workflow uploads it on
   `always()`. It's the input that broke the parser.
 - **Prompt changes in `src/script.py` are product changes.** The script is what
   determines whether the podcast is worth listening to. Don't tune it casually,
@@ -109,7 +110,7 @@ pytest -q          # 132 passing as of the last commit
 
 ```sh
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt           # ffmpeg must also be on PATH
+pip install -r requirements-dev.txt       # ffmpeg must also be on PATH
 pytest -q
 
 python main.py --stage parse              # free, no credentials
@@ -133,8 +134,9 @@ building on top of them.
   received an upload and is tested against fakes only.
 - **The email path's idempotency is CI-side, not in the code.** `--email` skips
   R2, so the HEAD-against-the-bucket check isn't available. The guard is the
-  `--email-marker` file cached under `emailed-<edition>-<date>` in
-  `.github/workflows/daily.yml`. Run the pipeline with `--email` outside that
+  `--email-marker` file cached under `emailed-<edition>-<actual-date>` in
+  `.github/workflows/daily.yml`; CI resolves the actual date before dependency
+  setup. Run the pipeline with `--email` outside that
   workflow and nothing stops a repeat send.
 - **`ENABLE_R2_PUBLISH` selects the CI path** — `true` publishes to R2, anything
   else emails. SMTP connection settings are repository *variables*; credentials

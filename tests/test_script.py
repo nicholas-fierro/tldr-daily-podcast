@@ -34,6 +34,13 @@ def test_prompt_carries_every_item():
     assert {i["title"] for i in payload["items"]} == {"Acquisition", "Paywalled"}
 
 
+def test_prompt_carries_edition_identity():
+    prompt = script.build_user_prompt(items(), "2026-08-20", "ai")
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert payload["edition"] == "ai"
+    assert "TLDR AI edition" in prompt
+
+
 def test_enriched_items_ship_their_article_text():
     payload = json.loads(script.build_user_prompt(items(), "2026-08-20").split("\n\n", 1)[1])
     enriched = next(i for i in payload["items"] if i["title"] == "Acquisition")

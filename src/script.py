@@ -283,8 +283,13 @@ def _default_script_provider() -> ScriptProvider:
     raise ScriptError(f"unsupported script provider: {config.SCRIPT_PROVIDER}")
 
 
-def build_user_prompt(items: list[Item], date: str) -> str:
+def build_user_prompt(
+    items: list[Item],
+    date: str,
+    edition: str = config.EDITION,
+) -> str:
     payload = {
+        "edition": edition,
         "edition_date": date,
         "item_count": len(items),
         "items": [
@@ -301,7 +306,7 @@ def build_user_prompt(items: list[Item], date: str) -> str:
         ],
     }
     return (
-        f"Here is the TLDR tech edition for {date}. Write today's episode.\n\n"
+        f"Here is the TLDR {edition.upper()} edition for {date}. Write today's episode.\n\n"
         f"{json.dumps(payload, indent=2, ensure_ascii=False)}"
     )
 
@@ -351,10 +356,12 @@ def generate_script(
     items: list[Item],
     date: str,
     provider: ScriptProvider | None = None,
+    *,
+    edition: str = config.EDITION,
 ) -> Script:
     """Generate one script, retrying API and unusable-output failures."""
     provider = provider or _default_script_provider()
-    user_prompt = build_user_prompt(items, date)
+    user_prompt = build_user_prompt(items, date, edition)
     retry_correction = ""
     last_error: Exception | None = None
 

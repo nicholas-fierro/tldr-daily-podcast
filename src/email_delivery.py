@@ -8,7 +8,7 @@ from pathlib import Path
 import smtplib
 import ssl
 
-from .config import SMTPConfig
+from .config import EDITION, SMTPConfig
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ def send_episode(
     date: str,
     headline: str,
     config: SMTPConfig,
+    *,
+    edition: str = EDITION,
 ) -> None:
     """Send one generated episode as an MP3 attachment."""
     if not mp3.is_file():
@@ -40,7 +42,7 @@ def send_episode(
     message["From"] = config.sender
     message["To"] = ", ".join(recipients)
     message.set_content(
-        f"Attached is the TLDR Daily podcast episode for {date}.\n"
+        f"Attached is the TLDR {edition.upper()} podcast episode for {date}.\n"
     )
     message.add_attachment(
         mp3.read_bytes(),

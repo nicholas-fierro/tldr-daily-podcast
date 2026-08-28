@@ -26,6 +26,7 @@ class PublishError(RuntimeError):
 
 @dataclass
 class Episode:
+    edition: str
     date: str  # YYYY-MM-DD
     title: str
     url: str
@@ -35,7 +36,7 @@ class Episode:
 
     @property
     def guid(self) -> str:
-        return f"tldr-daily-{self.date}"
+        return f"tldr-daily-{self.edition}-{self.date}"
 
 
 def r2_client(cfg: R2Config):
@@ -67,7 +68,7 @@ def build_description(items) -> str:
 def build_feed(episodes: list[Episode], cfg: R2Config, now: datetime | None = None) -> str:
     """Pure: episodes -> RSS 2.0 + iTunes XML. Newest first."""
     now = now or datetime.now(timezone.utc)
-    ordered = sorted(episodes, key=lambda e: e.date, reverse=True)
+    ordered = sorted(episodes, key=lambda e: (e.date, e.edition), reverse=True)
 
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -115,18 +116,23 @@ def upload(client, cfg: R2Config, key: str, body: bytes, content_type: str) -> N
         raise PublishError(f"upload of {key} failed: {exc}") from exc
 
 
-def upload_episode(client, cfg: R2Config, mp3: Path, date: str) -> tuple[str, int]:
-    key = config.EPISODE_KEY.format(date=date)
+def upload_episode(
+    client, cfg: R2Config, mp3: Path, edition: str, date: str
+) -> tuple[str, int]:
+    key = config.EPISODE_KEY.format(edition=edition, date=date)
     body = mp3.read_bytes()
     upload(client, cfg, key, body, "audio/mpeg")
     return key, len(body)
 
 
-def list_episode_keys(client, cfg: R2Config) -> list[str]:
+def list_episode_keys(
+    client, cfg: R2Config, edition: str | None = None
+) -> list[str]:
     keys: list[str] = []
     token = None
+    prefix = f"episodes/{edition}/" if edition else "episodes/"
     while True:
-        kwargs = {"Bucket": cfg.bucket, "Prefix": "episodes/"}
+        kwargs = {"Bucket": cfg.bucket, "Prefix": prefix}
         if token:
             kwargs["ContinuationToken"] = token
         page = client.list_objects_v2(**kwargs)
@@ -136,8 +142,13 @@ def list_episode_keys(client, cfg: R2Config) -> list[str]:
         token = page.get("NextContinuationToken")
 
 
-def prune_old_episodes(client, cfg: R2Config, keep: int = config.RETAIN_EPISODES) -> list[str]:
-    keys = list_episode_keys(client, cfg)
+def prune_old_episodes(
+    client,
+    cfg: R2Config,
+    edition: str,
+    keep: int = config.RETAIN_EPISODES,
+) -> list[str]:
+    keys = list_episode_keys(client, cfg, edition)
     stale = keys[:-keep] if len(keys) > keep else []
     for key in stale:
         client.delete_object(Bucket=cfg.bucket, Key=key)
@@ -151,20 +162,19 @@ def publish_feed(client, cfg: R2Config, episodes: list[Episode]) -> str:
     return cfg.feed_url
 
 
-META_KEY = "meta/{date}.json"
+META_KEY = "meta/{edition}/{date}.json"
 
 
 def save_episode_meta(client, cfg: R2Config, episode: Episode) -> None:
-    """Per-episode metadata, so the feed can be rebuilt from scratch later.
-
-    The MP3 alone cannot tell us the headline or the show notes, and we rebuild
-    rather than append — so the facts have to live somewhere durable.
-    """
+    """Persist metadata needed to rebuild the combined feed."""
     import json
 
     upload(
-        client, cfg, META_KEY.format(date=episode.date),
+        client,
+        cfg,
+        META_KEY.format(edition=episode.edition, date=episode.date),
         json.dumps({
+            "edition": episode.edition,
             "date": episode.date,
             "title": episode.title,
             "url": episode.url,
@@ -177,19 +187,30 @@ def save_episode_meta(client, cfg: R2Config, episode: Episode) -> None:
 
 
 def load_all_episode_meta(client, cfg: R2Config) -> list[Episode]:
-    """Every episode still present in the bucket, for the feed rebuild."""
+    """Load metadata for every episode still present in the combined feed."""
     import json
 
-    live_dates = {
-        Path(key).stem for key in list_episode_keys(client, cfg)
-    }
+    identities: list[tuple[str, str]] = []
+    for key in list_episode_keys(client, cfg):
+        parts = Path(key).parts
+        if len(parts) != 3:
+            log.warning("unexpected episode key %s; omitting from feed", key)
+            continue
+        identities.append((parts[1], Path(parts[2]).stem))
+
     episodes: list[Episode] = []
-    for date in sorted(live_dates):
+    for edition, date in sorted(identities):
         try:
             body = client.get_object(
-                Bucket=cfg.bucket, Key=META_KEY.format(date=date)
+                Bucket=cfg.bucket,
+                Key=META_KEY.format(edition=edition, date=date),
             )["Body"].read()
             episodes.append(Episode(**json.loads(body)))
         except Exception as exc:  # noqa: BLE001 - one bad record must not drop the feed
-            log.warning("no usable metadata for %s (%s); omitting from feed", date, exc)
+            log.warning(
+                "no usable metadata for %s/%s (%s); omitting from feed",
+                edition,
+                date,
+                exc,
+            )
     return episodes

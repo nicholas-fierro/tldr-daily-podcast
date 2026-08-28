@@ -2,9 +2,8 @@ name: daily episode
 
 on:
   schedule:
-    # UTC only, and Actions cron does not follow DST. These three land safely
-    # after TLDR's 6-7am ET publication window year-round. Freshness and
-    # delivery markers mean only the first run with a fresh edition does work.
+    # UTC only, and Actions cron does not follow DST. Each trigger fans out by
+    # edition; actual-edition markers make delayed or repeated runs no-ops.
     - cron: "15 11 * * 1-5"
     - cron: "15 12 * * 1-5"
     - cron: "15 13 * * 1-5"
@@ -15,42 +14,40 @@ on:
         required: false
       edition:
         description: "TLDR edition slug"
-        required: false
+        required: true
         default: tech
+        type: choice
+        options:
+          - tech
+          - ai
+          - webdev
+          - infosec
       stage:
         description: "Stop after this stage (fetch/parse/enrich/script/audio/publish)"
         required: false
         default: publish
 
-# Three overlapping triggers must never race each other into duplicate delivery.
-concurrency:
-  group: daily-episode
-  cancel-in-progress: false
-
 jobs:
   build:
+    name: build (${{ matrix.edition }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: ${{ fromJSON(github.event_name == 'schedule' && '["tech","ai","webdev","infosec"]' || format('["{0}"]', inputs.edition)) }}
+    concurrency:
+      group: daily-episode-${{ matrix.edition }}
+      cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - run: pip install -r requirements.txt
-
-      - uses: FedericoCarboni/setup-ffmpeg@v3
-        id: ffmpeg
-
-      - name: Resolve email delivery date
-        id: email_key
-        if: vars.ENABLE_R2_PUBLISH != 'true'
+      - name: Resolve edition identity
+        id: edition_key
         env:
+          EDITION: ${{ matrix.edition }}
           REQUESTED_DATE: ${{ inputs.date }}
         run: |
+          set -euo pipefail
           if [[ -n "$REQUESTED_DATE" ]]; then
             if [[ ! "$REQUESTED_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
               echo "Invalid edition date: $REQUESTED_DATE" >&2
@@ -58,9 +55,28 @@ jobs:
             fi
             edition_date="$REQUESTED_DATE"
           else
-            edition_date="$(TZ=America/New_York date +%F)"
+            final_url="$(curl \
+              --fail \
+              --location \
+              --retry 3 \
+              --retry-all-errors \
+              --retry-delay 2 \
+              --silent \
+              --show-error \
+              --output /dev/null \
+              --write-out '%{url_effective}' \
+              "https://tldr.tech/api/latest/$EDITION")"
+            if [[ "$final_url" =~ /([0-9]{4}-[0-9]{2}-[0-9]{2})/?$ ]]; then
+              edition_date="${BASH_REMATCH[1]}"
+            else
+              echo "Could not resolve edition date from $final_url" >&2
+              exit 1
+            fi
           fi
+
+          marker=".email-state/${EDITION}-${edition_date}.sent"
           echo "date=$edition_date" >> "$GITHUB_OUTPUT"
+          echo "marker=$marker" >> "$GITHUB_OUTPUT"
 
       - name: Restore email delivery marker
         id: email_marker_cache
@@ -69,14 +85,62 @@ jobs:
           (github.event_name == 'schedule' || inputs.stage == 'publish')
         uses: actions/cache/restore@v4
         with:
-          path: .email-state/sent
-          key: emailed-${{ inputs.edition || 'tech' }}-${{ steps.email_key.outputs.date }}
+          path: ${{ steps.edition_key.outputs.marker }}
+          key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}
+
+      - name: Decide whether work is needed
+        id: guard
+        env:
+          ENABLE_R2_PUBLISH: ${{ vars.ENABLE_R2_PUBLISH }}
+          EMAIL_CACHE_HIT: ${{ steps.email_marker_cache.outputs.cache-hit }}
+        run: |
+          if [[ "$ENABLE_R2_PUBLISH" != "true" && "$EMAIL_CACHE_HIT" == "true" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.guard.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        if: steps.guard.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Ensure ffmpeg is available
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
+            ffmpeg -version
+            ffprobe -version
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y ffmpeg; then
+              break
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              echo "ffmpeg installation failed after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: Run pipeline and email episode
         id: email_run
         if: >-
-          vars.ENABLE_R2_PUBLISH != 'true' &&
-          steps.email_marker_cache.outputs.cache-hit != 'true'
+          steps.guard.outputs.run == 'true' &&
+          vars.ENABLE_R2_PUBLISH != 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -89,16 +153,19 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           python main.py \
-            --edition "${{ inputs.edition || 'tech' }}" \
+            --edition "${{ matrix.edition }}" \
             --stage "${{ inputs.stage || 'publish' }}" \
-            ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
+            --local "out/${{ matrix.edition }}" \
+            ${{ inputs.date && format('--date {0}', inputs.date) || format('--resolved-date {0}', steps.edition_key.outputs.date) }} \
             --email \
-            --email-marker .email-state/sent \
+            --email-marker "${{ steps.edition_key.outputs.marker }}" \
             --verbose
 
       - name: Run pipeline and publish to R2
         id: r2_run
-        if: vars.ENABLE_R2_PUBLISH == 'true'
+        if: >-
+          steps.guard.outputs.run == 'true' &&
+          vars.ENABLE_R2_PUBLISH == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -111,9 +178,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python main.py \
-            --edition "${{ inputs.edition || 'tech' }}" \
+            --edition "${{ matrix.edition }}" \
             --stage "${{ inputs.stage || 'publish' }}" \
-            ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
+            --local "out/${{ matrix.edition }}" \
+            ${{ inputs.date && format('--date {0}', inputs.date) || format('--resolved-date {0}', steps.edition_key.outputs.date) }} \
             --verbose
 
       - name: Check email delivery marker
@@ -122,8 +190,10 @@ jobs:
           always() &&
           vars.ENABLE_R2_PUBLISH != 'true' &&
           steps.email_run.outcome == 'success'
+        env:
+          MARKER: ${{ steps.edition_key.outputs.marker }}
         run: |
-          if [[ -f .email-state/sent ]]; then
+          if [[ -f "$MARKER" ]]; then
             echo "sent=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -133,28 +203,32 @@ jobs:
           steps.email_marker_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: .email-state/sent
-          key: emailed-${{ inputs.edition || 'tech' }}-${{ steps.email_key.outputs.date }}
+          path: ${{ steps.edition_key.outputs.marker }}
+          key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}
 
       # Snapshot and script aid debugging. MP3 stays out of Actions artifacts.
       - name: Upload run artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: run-${{ github.run_id }}
+          name: run-${{ github.run_id }}-${{ matrix.edition }}
           path: |
-            out/*.html
-            out/*.script.json
+            out/${{ matrix.edition }}/*.html
+            out/${{ matrix.edition }}/*.script.json
           retention-days: 14
           if-no-files-found: ignore
 
       - name: Alert on failure
-        if: failure() && env.ALERT_WEBHOOK_URL != ''
+        if: failure()
         env:
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
         run: |
+          if [[ -z "$ALERT_WEBHOOK_URL" ]]; then
+            exit 0
+          fi
           curl -sS -X POST "$ALERT_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
             -d "$(jq -n \
+              --arg edition "${{ matrix.edition }}" \
               --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              '{text: ("TLDR podcast build failed: " + $run)}')"
+              '{text: ("TLDR " + $edition + " podcast build failed: " + $run)}')"
