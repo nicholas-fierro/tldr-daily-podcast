@@ -144,7 +144,11 @@ def test_kokoro_renders_each_speaker_with_its_configured_voice():
 
 
 def test_kokoro_converts_torch_tensor_audio_without_astype():
-    """Kokoro yields torch.Tensor, which has .clip() but not .astype()."""
+    """Kokoro yields torch.Tensor, which has .clip() but not .astype().
+
+    No real torch or numpy here — the base test job never installs the
+    optional Kokoro extras, so the fake must stand entirely on its own.
+    """
 
     class FakeTensor:
         def __init__(self, values):
@@ -154,8 +158,7 @@ def test_kokoro_converts_torch_tensor_audio_without_astype():
             return self
 
         def numpy(self):
-            import numpy as np
-            return np.array(self.values, dtype="float32")
+            return list(self.values)
 
     def pipeline(text, voice, speed):
         yield text, "phonemes", FakeTensor([0.0, 0.5, -0.5])
