@@ -126,12 +126,19 @@ WORD_HARD_MAX = 1_700
 
 # --- tts ------------------------------------------------------------------
 
-# Model IDs churn. Verify against current docs before trusting this default;
-# override with TTS_MODEL rather than editing, so the check stays cheap.
-TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.5-flash-preview-tts")
+TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "gemini").strip().lower()
 
-TTS_VOICE_A = os.environ.get("TTS_VOICE_A", "Kore")
-TTS_VOICE_B = os.environ.get("TTS_VOICE_B", "Algenib")
+# Gemini model IDs churn. Override these rather than editing pinned defaults.
+TTS_MODEL = os.environ.get("TTS_MODEL", "gemini-2.5-flash-preview-tts").strip()
+TTS_VOICE_A = os.environ.get("TTS_VOICE_A", "Kore").strip()
+TTS_VOICE_B = os.environ.get("TTS_VOICE_B", "Algenib").strip()
+
+# Kokoro runs locally and renders one voice at a time.
+KOKORO_LANG_CODE = os.environ.get("KOKORO_LANG_CODE", "a").strip()
+KOKORO_VOICE_A = os.environ.get("KOKORO_VOICE_A", "af_heart").strip()
+KOKORO_VOICE_B = os.environ.get("KOKORO_VOICE_B", "am_michael").strip()
+KOKORO_SPEED = float(os.environ.get("KOKORO_SPEED", "1.0"))
+TTS_LINE_GAP_MS = 180
 
 # Prefixed to every request so tone does not wander between segments.
 TTS_STYLE_DIRECTION = (

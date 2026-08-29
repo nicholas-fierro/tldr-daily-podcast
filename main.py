@@ -266,7 +266,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     # --- audio ---
-    rendered = tts.render_segments(episode_script, tts.GeminiTTS())
+    rendered = tts.render_segments(episode_script, tts.create_provider())
     headline = (
         f"{config.PODCAST_TITLE} — {date}"
         if bundle

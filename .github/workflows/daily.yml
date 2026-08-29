@@ -97,10 +97,25 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-kokoro.txt
 
       - name: Install Python dependencies
         if: steps.guard.outputs.run == 'true'
-        run: pip install -r requirements.txt
+        env:
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gemini' }}
+          PIPELINE_STAGE: ${{ inputs.stage || 'publish' }}
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
+          if [[ "${TTS_PROVIDER,,}" == "kokoro" &&
+                ( "$PIPELINE_STAGE" == "audio" || "$PIPELINE_STAGE" == "publish" ) ]]; then
+            pip install \
+              --index-url https://download.pytorch.org/whl/cpu \
+              torch==2.13.0
+            pip install -r requirements-kokoro.txt
+          fi
 
       - name: Ensure ffmpeg is available
         if: steps.guard.outputs.run == 'true'
@@ -125,6 +140,45 @@ jobs:
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
+      - name: Ensure Kokoro speech backend is available
+        if: steps.guard.outputs.run == 'true'
+        env:
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gemini' }}
+          PIPELINE_STAGE: ${{ inputs.stage || 'publish' }}
+        run: |
+          set -euo pipefail
+          if [[ "${TTS_PROVIDER,,}" != "kokoro" ||
+                ( "$PIPELINE_STAGE" != "audio" && "$PIPELINE_STAGE" != "publish" ) ]]; then
+            exit 0
+          fi
+          if command -v espeak-ng >/dev/null; then
+            espeak-ng --version
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y espeak-ng; then
+              break
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              echo "espeak-ng installation failed after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+          espeak-ng --version
+
+      - name: Restore Kokoro model cache
+        if: >-
+          steps.guard.outputs.run == 'true' &&
+          vars.TTS_PROVIDER == 'kokoro' &&
+          (github.event_name == 'schedule' ||
+           inputs.stage == 'audio' || inputs.stage == 'publish')
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: kokoro-hf-${{ runner.os }}-${{ runner.arch }}-0.9.4
+
       - name: Run pipeline and email episode
         id: email_run
         if: >-
@@ -132,6 +186,7 @@ jobs:
           vars.ENABLE_R2_PUBLISH != 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gemini' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
@@ -157,6 +212,7 @@ jobs:
           vars.ENABLE_R2_PUBLISH == 'true'
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gemini' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

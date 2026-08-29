@@ -66,7 +66,36 @@ def test_ffmpeg_uses_runner_or_retried_ubuntu_package():
     assert "for attempt in 1 2 3" in text
 
 
+def test_tts_provider_repo_variable_selects_runtime_and_dependencies():
+    text = workflow_text()
+    provider_env = "TTS_PROVIDER: ${{ vars.TTS_PROVIDER || 'gemini' }}"
+    assert text.count(provider_env) == 4
+    assert "requirements-kokoro.txt" in text
+    assert "https://download.pytorch.org/whl/cpu" in text
+    assert "sudo apt-get install -y espeak-ng" in text
+    assert "key: kokoro-hf-${{ runner.os }}-${{ runner.arch }}-0.9.4" in text
+    assert "PIPELINE_STAGE: ${{ inputs.stage || 'publish' }}" in text
+
+
 def test_mp3_is_not_uploaded_as_action_artifact():
     text = workflow_text()
     artifact_step = text.split("- name: Upload run artifacts", 1)[1]
     assert "*.mp3" not in artifact_step
+
+
+CI_WORKFLOW = Path(".github/workflows/test.yml")
+
+
+def ci_workflow_text() -> str:
+    return CI_WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_kokoro_dependency_lock_is_verified_in_ci():
+    text = ci_workflow_text()
+    assert "kokoro-deps" in text
+    assert "requirements-kokoro.txt" in text
+    assert "https://download.pytorch.org/whl/cpu" in text
+    # Import only, never instantiated — instantiating KPipeline downloads
+    # model weights, which is a live call the test suite must not make.
+    assert "from kokoro import KPipeline" in text
+    assert "KPipeline(" not in text
