@@ -21,6 +21,34 @@ LATEST_URL = "https://tldr.tech/api/latest/{edition}"
 EDITION_URL = "https://tldr.tech/{edition}/{date}"
 EDITION_MAX_AGE_DAYS = 3
 
+# The dated page path does not always match the API slug: /api/latest/webdev
+# redirects to /dev/YYYY-MM-DD. Verified 2026-08-28.
+EDITION_PAGE_SLUGS = {"webdev": "dev"}
+
+# Human-facing names, used in the script prompt and the email coverage summary.
+EDITION_NAMES = {
+    "tech": "Tech",
+    "ai": "AI",
+    "webdev": "Web Dev",
+    "fintech": "Fintech",
+    "infosec": "InfoSec",
+}
+
+# One episode per bundle. The first entry is the anchor: when no date is given,
+# its latest edition decides the target date every other source must match.
+EDITION_BUNDLES = {
+    "daily": ("tech", "ai", "webdev", "fintech"),
+}
+
+# Four editions yield 50-70 items — far more than a ten-minute episode can hold
+# and more context than the script model needs. Selection is balanced across
+# included sources so no edition is crowded out.
+BUNDLE_ITEM_CAP = 28
+
+# Two titles this similar (token Jaccard) are the same story told twice.
+# Deliberately high: merging two distinct stories loses one entirely.
+TITLE_SIMILARITY_THRESHOLD = 0.6
+
 # Honest identification. Points at the repo, not a person.
 USER_AGENT = (
     "tldr-daily-podcast/0.1 (personal podcast generator; "
@@ -141,6 +169,8 @@ PODCAST_LANGUAGE = "en-us"
 
 EPISODE_KEY = "episodes/{edition}/{date}.mp3"
 SCRIPT_KEY = "scripts/{edition}/{date}.json"
+# Snapshots stay source-qualified even in a bundle: when parsing breaks, the
+# input that broke it belongs to one source page, not to the combined episode.
 SNAPSHOT_KEY = "snapshots/{edition}/{date}.html"
 RETAIN_EPISODES = 30
 

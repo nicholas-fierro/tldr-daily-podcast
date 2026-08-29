@@ -8,6 +8,7 @@ from pathlib import Path
 import smtplib
 import ssl
 
+from .combine import EditionCoverage, coverage_summary
 from .config import EDITION, SMTPConfig
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,16 @@ def _recipients(value: str) -> list[str]:
     return recipients
 
 
+def _body(date: str, edition: str, coverage: list[EditionCoverage] | None) -> str:
+    """Coverage is reported in full: a missing source must never be silent."""
+    if coverage is None:
+        return f"Attached is the TLDR {edition.upper()} podcast episode for {date}.\n"
+    return (
+        f"Attached is the combined TLDR podcast episode for {date}.\n\n"
+        f"{coverage_summary(coverage)}\n"
+    )
+
+
 def send_episode(
     mp3: Path,
     date: str,
@@ -31,6 +42,7 @@ def send_episode(
     config: SMTPConfig,
     *,
     edition: str = EDITION,
+    coverage: list[EditionCoverage] | None = None,
 ) -> None:
     """Send one generated episode as an MP3 attachment."""
     if not mp3.is_file():
@@ -41,9 +53,7 @@ def send_episode(
     message["Subject"] = headline
     message["From"] = config.sender
     message["To"] = ", ".join(recipients)
-    message.set_content(
-        f"Attached is the TLDR {edition.upper()} podcast episode for {date}.\n"
-    )
+    message.set_content(_body(date, edition, coverage))
     message.add_attachment(
         mp3.read_bytes(),
         maintype="audio",

@@ -2,49 +2,36 @@ name: daily episode
 
 on:
   schedule:
-    # UTC only, and Actions cron does not follow DST. Each trigger fans out by
-    # edition; actual-edition markers make delayed or repeated runs no-ops.
-    - cron: "15 11 * * 1-5"
-    - cron: "15 12 * * 1-5"
+    # UTC only, and Actions cron does not follow DST. One combined episode per
+    # day; the delivery marker makes delayed or repeated runs no-ops. Later than
+    # a per-edition run would need: every source has to have published before we
+    # build, or it is silently omitted from the day's episode.
     - cron: "15 13 * * 1-5"
+    - cron: "15 14 * * 1-5"
+    - cron: "15 15 * * 1-5"
   workflow_dispatch:
     inputs:
       date:
         description: "Edition date (YYYY-MM-DD). Blank = latest."
         required: false
-      edition:
-        description: "TLDR edition slug"
-        required: true
-        default: tech
-        type: choice
-        options:
-          - tech
-          - ai
-          - webdev
-          - infosec
       stage:
-        description: "Stop after this stage (fetch/parse/enrich/script/audio/publish)"
+        description: "Stop after this stage (fetch/parse/combine/enrich/script/audio/publish)"
         required: false
         default: publish
 
 jobs:
   build:
-    name: build (${{ matrix.edition }})
+    name: build (daily)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        edition: ${{ fromJSON(github.event_name == 'schedule' && '["tech","ai","webdev","infosec"]' || format('["{0}"]', inputs.edition)) }}
+    timeout-minutes: 40
     concurrency:
-      group: daily-episode-${{ matrix.edition }}
+      group: daily-combined
       cancel-in-progress: false
 
     steps:
-      - name: Resolve edition identity
+      - name: Resolve target date
         id: edition_key
         env:
-          EDITION: ${{ matrix.edition }}
           REQUESTED_DATE: ${{ inputs.date }}
         run: |
           set -euo pipefail
@@ -55,6 +42,8 @@ jobs:
             fi
             edition_date="$REQUESTED_DATE"
           else
+            # The anchor edition fixes the target date; every other source must
+            # match it exactly or is omitted and reported.
             final_url="$(curl \
               --fail \
               --location \
@@ -65,7 +54,7 @@ jobs:
               --show-error \
               --output /dev/null \
               --write-out '%{url_effective}' \
-              "https://tldr.tech/api/latest/$EDITION")"
+              "https://tldr.tech/api/latest/tech")"
             if [[ "$final_url" =~ /([0-9]{4}-[0-9]{2}-[0-9]{2})/?$ ]]; then
               edition_date="${BASH_REMATCH[1]}"
             else
@@ -74,7 +63,7 @@ jobs:
             fi
           fi
 
-          marker=".email-state/${EDITION}-${edition_date}.sent"
+          marker=".email-state/daily-${edition_date}.sent"
           echo "date=$edition_date" >> "$GITHUB_OUTPUT"
           echo "marker=$marker" >> "$GITHUB_OUTPUT"
 
@@ -86,7 +75,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ steps.edition_key.outputs.marker }}
-          key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}
+          key: emailed-daily-${{ steps.edition_key.outputs.date }}
 
       - name: Decide whether work is needed
         id: guard
@@ -153,9 +142,9 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           python main.py \
-            --edition "${{ matrix.edition }}" \
+            --bundle daily \
             --stage "${{ inputs.stage || 'publish' }}" \
-            --local "out/${{ matrix.edition }}" \
+            --local "out/daily" \
             ${{ inputs.date && format('--date {0}', inputs.date) || format('--resolved-date {0}', steps.edition_key.outputs.date) }} \
             --email \
             --email-marker "${{ steps.edition_key.outputs.marker }}" \
@@ -178,9 +167,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python main.py \
-            --edition "${{ matrix.edition }}" \
+            --bundle daily \
             --stage "${{ inputs.stage || 'publish' }}" \
-            --local "out/${{ matrix.edition }}" \
+            --local "out/daily" \
             ${{ inputs.date && format('--date {0}', inputs.date) || format('--resolved-date {0}', steps.edition_key.outputs.date) }} \
             --verbose
 
@@ -204,17 +193,17 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ steps.edition_key.outputs.marker }}
-          key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}
+          key: emailed-daily-${{ steps.edition_key.outputs.date }}
 
       # Snapshot and script aid debugging. MP3 stays out of Actions artifacts.
       - name: Upload run artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: run-${{ github.run_id }}-${{ matrix.edition }}
+          name: run-${{ github.run_id }}-daily
           path: |
-            out/${{ matrix.edition }}/*.html
-            out/${{ matrix.edition }}/*.script.json
+            out/daily/*.html
+            out/daily/*.script.json
           retention-days: 14
           if-no-files-found: ignore
 
@@ -229,6 +218,5 @@ jobs:
           curl -sS -X POST "$ALERT_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
             -d "$(jq -n \
-              --arg edition "${{ matrix.edition }}" \
               --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              '{text: ("TLDR " + $edition + " podcast build failed: " + $run)}')"
+              '{text: ("TLDR daily podcast build failed: " + $run)}')"

@@ -31,17 +31,21 @@ def test_email_delivery_marker_uses_actual_edition_identity():
     text = workflow_text()
     assert "uses: actions/cache/restore@v4" in text
     assert "uses: actions/cache/save@v4" in text
-    assert "https://tldr.tech/api/latest/$EDITION" in text
-    assert "key: emailed-${{ matrix.edition }}-${{ steps.edition_key.outputs.date }}" in text
+    assert "https://tldr.tech/api/latest/tech" in text
+    assert "key: emailed-daily-${{ steps.edition_key.outputs.date }}" in text
     assert '--email-marker "${{ steps.edition_key.outputs.marker }}"' in text
     assert "format('--resolved-date {0}', steps.edition_key.outputs.date)" in text
 
 
-def test_scheduled_runs_fan_out_and_concurrency_is_per_edition():
+def test_scheduled_runs_build_one_combined_episode():
     text = workflow_text()
-    assert '["tech","ai","webdev","infosec"]' in text
-    assert "group: daily-episode-${{ matrix.edition }}" in text
-    assert "group: daily-episode\n" not in text
+    assert "strategy:" not in text
+    assert "matrix" not in text
+    assert "--bundle daily" in text
+    assert "group: daily-combined" in text
+    # One marker, one email, one episode per day.
+    assert text.count("key: emailed-daily-") == 2
+    assert text.count("--email \\") == 1
 
 
 def test_delivery_marker_guard_runs_before_dependency_setup():

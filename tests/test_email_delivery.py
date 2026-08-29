@@ -165,3 +165,60 @@ def test_smtp_config_rejects_invalid_values(monkeypatch, name, value):
 
     with pytest.raises(config.MissingCredential):
         config.smtp_config()
+
+
+# --- combined-edition coverage reporting ----------------------------------
+
+def send_and_capture(monkeypatch, tmp_path, **kwargs):
+    created = []
+
+    def fake_smtp(*args, **smtp_kwargs):
+        server = FakeSMTP(*args, **smtp_kwargs)
+        created.append(server)
+        return server
+
+    monkeypatch.setattr(email_delivery.smtplib, "SMTP_SSL", fake_smtp)
+    mp3 = tmp_path / "daily-2026-08-28.mp3"
+    mp3.write_bytes(b"mp3 audio")
+
+    email_delivery.send_episode(
+        mp3,
+        "2026-08-28",
+        "TLDR Daily — 2026-08-28",
+        smtp_config(),
+        **kwargs,
+    )
+    return created[0].message.get_body(preferencelist=("plain",)).get_content()
+
+
+def test_body_reports_included_and_missing_sources(monkeypatch, tmp_path):
+    from src import combine
+
+    body = send_and_capture(
+        monkeypatch,
+        tmp_path,
+        edition="daily",
+        coverage=[
+            combine.EditionCoverage("tech", combine.INCLUDED, 14),
+            combine.EditionCoverage("ai", combine.INCLUDED, 18),
+            combine.EditionCoverage("webdev", combine.INCLUDED, 15),
+            combine.EditionCoverage(
+                "fintech",
+                combine.NOT_PUBLISHED,
+                0,
+                "no 2026-08-28 edition was published",
+            ),
+        ],
+    )
+
+    assert "Edition coverage:" in body
+    assert "- Tech: included — 14 items" in body
+    assert "- AI: included — 18 items" in body
+    assert "- Web Dev: included — 15 items" in body
+    assert "- Fintech: not included — no 2026-08-28 edition was published" in body
+
+
+def test_single_edition_body_is_unchanged(monkeypatch, tmp_path):
+    body = send_and_capture(monkeypatch, tmp_path, edition="tech")
+    assert "Attached is the TLDR TECH podcast episode for 2026-08-28." in body
+    assert "Edition coverage" not in body
