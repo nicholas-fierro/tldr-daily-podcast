@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 145 passing][tests-shield]][tests-url]
+[![Tests: 191 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -11,8 +11,8 @@
   <h1 align="center">TLDR Daily Podcast</h1>
 
   <p align="center">
-    Two-host audio briefings for new TLDR Tech, AI, Web Dev, and InfoSec editions —
-    built from the <em>linked articles</em>, not the blurbs.
+    One two-host audio briefing a day, combining the TLDR Tech, AI, Web Dev, and
+    Fintech newsletters — built from the <em>linked articles</em>, not the blurbs.
     <br />
     <a href="#how-it-works"><strong>How it works »</strong></a>
     <br />
@@ -67,12 +67,13 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-[TLDR](https://tldr.tech/tech) publishes Tech, AI, Web Dev, and InfoSec newsletters
-on their own schedules. Reading them takes time you don't always have; listening
-does not.
+[TLDR](https://tldr.tech/tech) publishes Tech, AI, Web Dev, Fintech, and InfoSec
+newsletters on their own schedules. Reading them takes time you don't always
+have; listening does not.
 
-This repository is the automation that turns each new edition into a podcast episode.
-It scrapes the day's edition, follows every link and reads the **actual articles**,
+This repository is the automation that turns each day's newsletters into a
+single podcast episode. It scrapes every source published that day, merges them
+into one running order, follows every link and reads the **actual articles**,
 has an LLM write a two-host dialogue grounded in that text, voices it with
 multi-speaker TTS, and delivers the finished MP3.
 
@@ -103,19 +104,26 @@ Two properties matter more than anything else here:
 ### How It Works
 
 ```
-cron (3× weekday mornings, UTC × 4 editions)
- └─ resolve    /api/latest/<edition> → actual edition date → delivery-marker guard
-     └─ fetch      raw HTML + edition date from the redirect
+cron (3× weekday mornings, UTC — one combined run)
+ └─ resolve    /api/latest/tech → target date → delivery-marker guard
+     └─ fetch      each source at its exact dated page (tech, ai, webdev, fintech)
          └─ guard  outside lookback? → exit 0. already delivered? → exit 0.
          └─ parse   → [{section, title, url, blurb, read_time}], sponsors dropped
-             └─ dedup    → suppress URLs seen in the last 3 days
-                 └─ enrich   → concurrent article fetch + Trafilatura text (best-effort)
-                     └─ script   → one LLM call → 5-8 segments of two-host dialogue
-                         └─ tts      → one request per segment → 24kHz PCM
-                             └─ audio    → 350ms gaps, loudnorm, mono 64kbps MP3, ID3
-                                 └─ deliver  → R2 upload + RSS rebuild
-                                     ── or ─→ email the MP3 as an attachment (--email)
+             └─ combine  → merge sources, drop cross-edition repeats, balance to 28
+                 └─ dedup    → suppress URLs seen in the last 3 days
+                     └─ enrich   → concurrent article fetch + Trafilatura text (best-effort)
+                         └─ script   → one LLM call → 5-8 segments of two-host dialogue
+                             └─ tts      → one request per segment → 24kHz PCM
+                                 └─ audio    → 350ms gaps, loudnorm, mono 64kbps MP3, ID3
+                                     └─ deliver  → R2 upload + RSS rebuild
+                                         ── or ─→ email the MP3 (--email)
 ```
+
+**One episode a day, from four newsletters.** The anchor edition (`tech`) fixes
+the target date; every other source is then requested at *that exact date*. A
+source that did not publish that day is omitted and named in the delivery email
+— never replaced with another day's edition. Any other fetch failure, and any
+source that parses to zero items, fails the whole episode.
 
 **Delivery forks after the MP3 exists.** Everything above `deliver` is shared by
 both paths. `--email` sends the finished file as an attachment over SMTP and
@@ -126,8 +134,9 @@ One module per stage in `src/`, orchestrated by `main.py`:
 
 | Module | Responsibility |
 |---|---|
-| `src/fetch.py` | Hit `/api/latest/<edition>`, follow the redirect, return HTML + date |
+| `src/fetch.py` | Hit `/api/latest/<edition>` or the exact dated page, return HTML + date |
 | `src/parse.py` | HTML → items. **Sponsor filtering lives here.** |
+| `src/combine.py` | Several editions of one date → one deduplicated, balanced running order |
 | `src/enrich.py` | Concurrent article fetch, readable-text extraction, paywall detection |
 | `src/script.py` | Items → OpenRouter → validated segmented dialogue JSON |
 | `src/tts.py` | Segments → per-segment audio, with retry, behind a `TTSProvider` protocol |
@@ -230,9 +239,15 @@ delivery path you actually use.
 ## Usage
 
 ```sh
-python main.py                      # today's edition, full pipeline
+python main.py --bundle daily       # what CI runs: one episode from all four sources
+python main.py                      # a single edition (tech), full pipeline
 python main.py --date 2026-08-20    # re-run a past edition
 ```
+
+`--bundle` and `--edition` are mutually exclusive. Bundles are defined in
+`EDITION_BUNDLES` in `src/config.py`; `daily` is `tech`, `ai`, `webdev`, and
+`fintech`, and its first entry is the anchor that fixes the target date.
+Single-edition runs remain available for debugging one newsletter.
 
 ### Stage by Stage
 
@@ -241,6 +256,7 @@ is cumulative — later stages need everything before them.
 
 ```sh
 python main.py --stage parse              # no credentials needed
+python main.py --bundle daily --stage combine   # no credentials; shows coverage + merges
 python main.py --stage enrich             # no credentials; adds article text + success rate
 python main.py --stage script             # needs OPENROUTER_API_KEY
 python main.py --stage audio --no-upload  # needs GEMINI_API_KEY + ffmpeg; MP3 to ./out
@@ -258,11 +274,23 @@ python main.py --email                    # full run, emailed instead; needs SMT
 | `--email` | Send the MP3 as an SMTP attachment. No R2 access at all. |
 | `--no-upload` | Write the MP3 to `--local` and stop. Neither R2 nor email. |
 
-`--email-marker <path>` writes the edition slug and actual edition date, and only
-after the send succeeds. That marker is how the email path gets its idempotency:
-CI resolves the newsletter's actual date before setup, then caches the marker as
-`emailed-<edition>-<actual-date>`. This supports newsletters with different
-publication schedules and skips delivered editions before dependency setup.
+**A bundled email reports its coverage in the body** — every source listed as
+included with its item count, or as not published with the reason:
+
+```
+Edition coverage:
+- Tech: included — 14 items
+- AI: included — 18 items
+- Web Dev: included — 15 items
+- Fintech: not included — no 2026-08-28 edition was published
+```
+
+A missing source is never silent. The hosts do not mention it on air.
+
+`--email-marker <path>` writes the delivered identity and actual edition date,
+and only after the send succeeds. That marker is how the email path gets its
+idempotency: CI resolves the target date before setup, then caches the marker as
+`emailed-daily-<target-date>`, skipping delivered days before dependency setup.
 See [Scheduling](#scheduling).
 
 ### Flags
@@ -271,12 +299,13 @@ See [Scheduling](#scheduling).
 |---|---|
 | `--date YYYY-MM-DD` | Re-run a past edition. Also bypasses the recency guard. |
 | `--resolved-date YYYY-MM-DD` | Pin CI's resolved latest edition while retaining the recency guard. |
-| `--edition <slug>` | `tech` (default), `ai`, `webdev`, `infosec`. |
-| `--stage <name>` | Stop after `fetch`/`parse`/`enrich`/`script`/`audio`/`publish`. |
+| `--edition <slug>` | `tech` (default), `ai`, `webdev`, `fintech`, `infosec`. |
+| `--bundle <name>` | Combine several editions of one date into one episode. `daily` is the only bundle. Excludes `--edition`. |
+| `--stage <name>` | Stop after `fetch`/`parse`/`combine`/`enrich`/`script`/`audio`/`publish`. |
 | `--local <dir>` | Working directory for intermediate files. Defaults to `out`. |
 | `--no-upload` | Skip all R2 access. Implies no idempotency check and no dedup. |
 | `--email` | Email the MP3 instead of publishing to R2. Also skips dedup and idempotency. |
-| `--email-marker <path>` | Write `<edition>:<actual-date>` only after a successful send. |
+| `--email-marker <path>` | Write `<identity>:<actual-date>` only after a successful send. |
 | `--force` | Ignore both the recency guard and the idempotency check. |
 | `-v`, `--verbose` | Debug logging. |
 
@@ -285,10 +314,13 @@ credential was missing.
 
 ### Scheduling
 
-`.github/workflows/daily.yml` fires at 11:15, 12:15, and 13:15 UTC on weekdays.
-Each scheduled trigger fans out across `tech`, `ai`, `webdev`, and `infosec`;
-`workflow_dispatch` runs only its selected edition and accepts optional date and
-stage inputs.
+`.github/workflows/daily.yml` fires at 13:15, 14:15, and 15:15 UTC on weekdays.
+Each trigger runs one job producing one combined episode; `workflow_dispatch`
+accepts optional date and stage inputs.
+
+These times are later than a per-edition run would need. Every source has to
+have published before the episode is built, or it is omitted for the day — and
+the marker means the first successful run is the only one that does any work.
 
 Three triggers rather than one because **GitHub Actions cron is UTC-only, does
 not follow DST, and is not punctual**. GitHub can still drop all scheduled runs;
@@ -296,18 +328,19 @@ the independent fallback design is tracked in [`EXTERNAL_SCHEDULER.md`](EXTERNAL
 
 Guards make delayed and repeated runs safe:
 
-* **Actual-edition resolver** — before checkout or dependency setup, CI follows
-  `/api/latest/<edition>` and extracts the newsletter's real publication date.
+* **Target-date resolver** — before checkout or dependency setup, CI follows
+  `/api/latest/tech` and extracts the anchor newsletter's real publication date.
+  Every source is then requested at that exact date by Python, never through
+  `/api/latest`.
 * **Recency guard** — an undelivered latest edition may be up to three days old,
   which recovers delayed runs and supports newsletters with different cadences.
 * **Idempotency, R2 path** — the first publishing action is a HEAD against
-  `episodes/<edition>/<actual-date>.mp3`. Existing object means exit 0.
-* **Idempotency, email path** — CI restores
-  `emailed-<edition>-<actual-date>` before checkout. A hit skips setup and
-  generation entirely.
+  `episodes/daily/<target-date>.mp3`. Existing object means exit 0.
+* **Idempotency, email path** — CI restores `emailed-daily-<target-date>` before
+  checkout. A hit skips setup and generation entirely.
 
-Concurrency is scoped by edition. Duplicate runs for one newsletter serialize;
-different newsletters may generate in parallel.
+Concurrency group `daily-combined` serializes duplicate runs: one episode, one
+email, one R2 object per day.
 
 **Which path CI takes is controlled by the `ENABLE_R2_PUBLISH` repository
 variable.** Set it to `true` and the workflow publishes to R2; anything else,
@@ -337,6 +370,8 @@ say so if you do.
 | Storage + delivery | Cloudflare R2 + private RSS | Effectively free at this volume, S3-compatible, no egress fees, any podcast app can subscribe. |
 | Workflow tools (n8n etc.) | **Not** for the core pipeline | Article fetching, retry logic, chunked TTS, and audio concat are code-shaped, not node-shaped. |
 | Paywall handling | Blurb fallback, never headless Chrome | Not worth the maintenance or the ToS exposure. |
+| Daily output | One combined episode, not one per newsletter | Four ten-minute episodes is more listening than the day's news is worth, and the same story often runs in two newsletters. Merging deduplicates it once. |
+| A source that did not publish | Omit it, report it, never substitute | A story from another day presented as today's news is worse than a shorter episode. |
 
 Consequences worth knowing before you change something:
 
@@ -365,9 +400,21 @@ Consequences worth knowing before you change something:
 * **The TTS layer sits behind a `TTSProvider` protocol** so swapping providers
   is a one-file change. ElevenLabs is the documented fallback if Gemini voice
   quality disappoints.
-* **`--edition` is part of every persistent identity.** Scheduled runs cover
-  `tech`, `ai`, `webdev`, and `infosec`; object keys, markers, filenames, feed
-  GUIDs, dedup state, titles, and prompts include the edition.
+* **The delivered identity is part of every persistent name.** For scheduled
+  runs that identity is the bundle, `daily`; for single-edition runs it is the
+  edition slug. Object keys, markers, filenames, feed GUIDs, dedup state,
+  titles, and prompts all include it. **Snapshots are the exception** — they
+  stay source-qualified (`snapshots/<source>/<date>.html`), because when
+  parsing breaks the input that broke it belongs to one source page.
+* **An unpublished edition does not 404.** `tldr.tech/<edition>/<date>` 307s to
+  the undated landing page when that edition does not exist, so the
+  not-published check is a date mismatch, not a status code. Verified
+  2026-08-28 against `fintech/2026-08-28`. `webdev` is also the one edition
+  whose dated page path differs from its API slug — it serves from `/dev/`.
+* **Cross-edition merging is by exact URL or strong title similarity.** Title
+  merging applies only *across* editions: two similar titles inside one
+  newsletter are two deliberate items. The threshold is deliberately high —
+  merging two distinct stories loses one entirely.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -377,6 +424,9 @@ Consequences worth knowing before you change something:
 | Failure | Behavior |
 |---|---|
 | TLDR page 404/500 | Retry 3× with backoff, then exit non-zero (alerts) |
+| A bundle source has no edition that day | Omit it, record it in coverage, continue. Reported in the email. |
+| The anchor edition is missing | **Hard fail** — there is no target date without it |
+| A bundle source fails for any other reason | **Hard fail** — a silently short episode is worse than none |
 | Parser returns 0 items | **Hard fail + alert** — the page structure changed |
 | Parser returns <5 items | Warn + alert, continue |
 | Individual article fetch fails | Fall back to blurb, mark `enriched: false`, continue |
@@ -397,7 +447,7 @@ broke it — it's in the workflow artifacts and at
 <!-- STATUS -->
 ## Status
 
-The full pipeline is written and `pytest` is green at 145 tests. What has and
+The full pipeline is written and `pytest` is green at 191 tests. What has and
 hasn't been exercised against live services:
 
 | Stage | Live verification |
@@ -409,6 +459,7 @@ hasn't been exercised against live services:
 | Publish (R2) | Feed generation and retention tested in isolation. **Never uploaded to R2.** |
 | Deliver (email) | **Verified live** (2026-08-23) — episode delivered end-to-end as an SMTP attachment |
 | Automate | **Verified live** (2026-08-27) — manual and scheduled runs exercised; GitHub later delayed/dropped cron events, motivating the external fallback design. |
+| Combine | **Verified live** (2026-08-28) — 4 sources requested for one date, fintech correctly reported as not published, 47 items merged to 28 balanced across tech/ai/webdev. Not yet exercised through script, audio, or delivery. |
 
 Notes from those runs, worth carrying forward:
 
@@ -431,8 +482,12 @@ Notes from those runs, worth carrying forward:
       attachment instead of publishing to R2
 - [x] **Gemini TTS model ID and voice names verified** against a live
       `models.list` call and a full 7/7 segment render
+- [x] **One combined daily episode** — `--bundle daily` merges the day's Tech,
+      AI, Web Dev, and Fintech editions into a single briefing
 - [ ] First live R2 upload and a feed that validates in a real podcast app
 - [ ] A full unattended week on the GitHub Actions schedule
+- [ ] A combined episode heard end-to-end — the 28-item cap and the combined
+      prompt have not yet been judged against a real listen
 
 Explicitly **not** in scope: chapter markers, transcripts in the feed, per-item
 deep links beyond the description list, any web UI.
@@ -495,6 +550,6 @@ Project Link: [https://github.com/nicholas-fierro/tldr-daily-podcast](https://gi
 [workflow-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/actions/workflows/daily.yml
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue?style=for-the-badge
 [python-url]: https://www.python.org/
-[tests-shield]: https://img.shields.io/badge/tests-145%20passing-brightgreen?style=for-the-badge
+[tests-shield]: https://img.shields.io/badge/tests-191%20passing-brightgreen?style=for-the-badge
 [tests-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/tree/main/tests
 [python-badge]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white

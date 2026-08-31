@@ -172,6 +172,35 @@ def test_persistent_object_keys_are_edition_scoped():
     )
 
 
+def test_combined_episodes_use_the_bundle_identity():
+    """A bundle is one persistent identity like any edition, so episode,
+    script, and metadata keys all hang off `daily/<date>`."""
+    assert config.EPISODE_KEY.format(edition="daily", date="2026-08-28") == (
+        "episodes/daily/2026-08-28.mp3"
+    )
+    assert config.SCRIPT_KEY.format(edition="daily", date="2026-08-28") == (
+        "scripts/daily/2026-08-28.json"
+    )
+    assert publish.META_KEY.format(edition="daily", date="2026-08-28") == (
+        "meta/daily/2026-08-28.json"
+    )
+    assert config.DEDUP_STATE_KEY.format(edition="daily") == (
+        "state/daily/seen-urls.json"
+    )
+    assert CFG.episode_url("daily", "2026-08-28") == (
+        "https://media.example.com/episodes/daily/2026-08-28.mp3"
+    )
+    assert episode(date="2026-08-28", edition="daily").guid == "tldr-daily-daily-2026-08-28"
+
+
+def test_snapshots_stay_source_qualified_within_a_bundle():
+    """When parsing breaks, the input that broke it belongs to one source."""
+    for source in ("tech", "ai", "webdev", "fintech"):
+        assert config.SNAPSHOT_KEY.format(edition=source, date="2026-08-28") == (
+            f"snapshots/{source}/2026-08-28.html"
+        )
+
+
 def test_empty_feed_is_still_valid():
     parsed = ElementTree.fromstring(publish.build_feed([], CFG))
     assert parsed.findall("channel/item") == []

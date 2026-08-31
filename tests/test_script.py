@@ -307,3 +307,46 @@ def test_serialized_script_round_trips():
     assert data["date"] == "2026-08-20"
     assert data["word_count"] == 10
     assert data["segments"][0]["lines"][0]["speaker"] == config.HOST_A
+
+
+# --- combined briefing prompt ---------------------------------------------
+
+def test_system_prompt_demands_one_cohesive_briefing():
+    prompt = script.SYSTEM_PROMPT
+    assert "one cohesive briefing" in prompt
+    assert "not several mini-podcasts" in prompt
+    assert "Do not name the sources" in prompt
+
+
+def test_combined_prompt_names_its_sources_and_labels_items():
+    from src.combine import CombinedItem
+
+    items = [
+        CombinedItem(
+            section="s",
+            title="A shared story",
+            url="https://e.com/a",
+            blurb="b",
+            sources=["tech", "ai"],
+        )
+    ]
+
+    prompt = script.build_user_prompt(
+        items, "2026-08-28", "daily", sources=["tech", "ai", "webdev"]
+    )
+
+    assert "single combined episode" in prompt
+    assert "Tech, AI, Web Dev" in prompt
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert payload["sources"] == ["tech", "ai", "webdev"]
+    assert payload["items"][0]["sources"] == ["tech", "ai"]
+
+
+def test_single_edition_prompt_is_unchanged():
+    items = [Item(section="s", title="A story", url="https://e.com/a", blurb="b")]
+    prompt = script.build_user_prompt(items, "2026-08-28", "tech")
+
+    assert "Here is the TLDR TECH edition for 2026-08-28." in prompt
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert "sources" not in payload
+    assert "sources" not in payload["items"][0]

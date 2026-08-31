@@ -16,6 +16,7 @@ from typing import Protocol
 import httpx
 
 from . import config
+from .combine import CombinedItem
 from .parse import Item
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,15 @@ grouped by theme rather than newsletter order. \
 Each story may appear in only one segment. The opening segment covers the biggest story \
 or one coherent theme; it must not preview stories that later segments repeat. Sections \
 in the input are topic hints, not a running order.
+
+SOURCES. The input may combine several TLDR newsletters from the same day. Write one \
+cohesive briefing, not several mini-podcasts stitched together: never announce a switch \
+from one newsletter to another, and never structure the episode by source. Group across \
+sources by theme. Each included source in the input should contribute at least one story \
+somewhere in the episode. An item's `sources` field lists the newsletters that carried it \
+— a story carried by more than one is a signal that it mattered more that day, not \
+something to mention aloud. Do not name the sources, the source count, or any missing \
+newsletter on air.
 
 WEIGHTING. Weight by substance. A major acquisition or a real technical result earns \
 60-90 seconds. A minor item earns one sentence. You are explicitly authorized to omit \
@@ -287,6 +297,7 @@ def build_user_prompt(
     items: list[Item],
     date: str,
     edition: str = config.EDITION,
+    sources: list[str] | None = None,
 ) -> str:
     payload = {
         "edition": edition,
@@ -301,14 +312,25 @@ def build_user_prompt(
                 "enriched": item.enriched,
                 "blurb": item.blurb,
                 "article_text": item.text if item.enriched else None,
+                **(
+                    {"sources": item.sources}
+                    if sources and isinstance(item, CombinedItem)
+                    else {}
+                ),
             }
             for item in items
         ],
     }
-    return (
-        f"Here is the TLDR {edition.upper()} edition for {date}. Write today's episode.\n\n"
-        f"{json.dumps(payload, indent=2, ensure_ascii=False)}"
-    )
+    if sources:
+        payload["sources"] = sources
+        names = ", ".join(config.EDITION_NAMES.get(s, s.upper()) for s in sources)
+        heading = (
+            f"Here are the TLDR newsletters for {date} ({names}), already merged and "
+            "deduplicated. Write today's single combined episode."
+        )
+    else:
+        heading = f"Here is the TLDR {edition.upper()} edition for {date}. Write today's episode."
+    return f"{heading}\n\n{json.dumps(payload, indent=2, ensure_ascii=False)}"
 
 
 def _extract_json(raw: str) -> dict:
@@ -358,10 +380,11 @@ def generate_script(
     provider: ScriptProvider | None = None,
     *,
     edition: str = config.EDITION,
+    sources: list[str] | None = None,
 ) -> Script:
     """Generate one script, retrying API and unusable-output failures."""
     provider = provider or _default_script_provider()
-    user_prompt = build_user_prompt(items, date, edition)
+    user_prompt = build_user_prompt(items, date, edition, sources)
     retry_correction = ""
     last_error: Exception | None = None
 
