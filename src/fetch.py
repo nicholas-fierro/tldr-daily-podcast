@@ -81,11 +81,11 @@ def fetch_edition(edition: str = config.EDITION, date: str | None = None) -> Edi
                 response = client.get(url)
 
             if response.status_code == 404:
-                if date:
-                    raise EditionNotPublished(
-                        f"no {edition} edition was published for {date}"
-                    )
-                raise FetchError(f"{url} returned 404 — no such edition")
+                # An unpublished dated edition 307s to the undated landing
+                # page rather than 404ing (see below), so a 404 here is a
+                # genuine fetch failure, not evidence of no edition — it
+                # must stay fatal even when a date was requested.
+                raise FetchError(f"{url} returned 404")
             response.raise_for_status()
 
             final_url = str(response.url)

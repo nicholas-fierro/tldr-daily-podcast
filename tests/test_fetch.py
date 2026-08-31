@@ -81,14 +81,17 @@ def test_a_different_dates_edition_is_never_substituted(monkeypatch):
         fetch_with(handler, monkeypatch, edition="fintech", date="2026-08-28")
 
 
-def test_dated_404_degrades(monkeypatch):
-    with pytest.raises(fetch.EditionNotPublished):
+def test_dated_404_is_fatal_not_a_missing_edition(monkeypatch):
+    """A 404 is not the verified unpublished shape (a 307 to the landing
+    page) and must not be treated as one."""
+    with pytest.raises(fetch.FetchError) as caught:
         fetch_with(
             lambda request: httpx.Response(404),
             monkeypatch,
             edition="fintech",
             date="2026-08-28",
         )
+    assert not isinstance(caught.value, fetch.EditionNotPublished)
 
 
 def test_not_published_is_a_fetch_error_subclass():
