@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 191 passing][tests-shield]][tests-url]
+[![Tests: 200 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -74,8 +74,8 @@ have; listening does not.
 This repository is the automation that turns each day's newsletters into a
 single podcast episode. It scrapes every source published that day, merges them
 into one running order, follows every link and reads the **actual articles**,
-has an LLM write a two-host dialogue grounded in that text, voices it with
-multi-speaker TTS, and delivers the finished MP3.
+has an LLM write a two-host dialogue grounded in that text, voices it with the
+configured TTS provider, and delivers the finished MP3.
 
 Two properties matter more than anything else here:
 
@@ -94,7 +94,8 @@ Two properties matter more than anything else here:
 * [httpx](https://www.python-httpx.org/) + [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/) — fetch and structural parse
 * [Trafilatura](https://trafilatura.readthedocs.io/) — readable-text extraction from linked articles
 * [OpenRouter](https://openrouter.ai/) (`deepseek/deepseek-v3.2`) — script generation with JSON Schema output
-* [Google Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation) — multi-speaker voicing
+* [Google Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation) — default multi-speaker provider
+* [Kokoro-82M](https://pypi.org/project/kokoro/) — optional local, open-weight provider
 * [ffmpeg](https://ffmpeg.org/) — concat, loudness normalization, MP3 encode, ID3 tags
 * [Cloudflare R2](https://developers.cloudflare.com/r2/) + RSS 2.0 — storage and private feed delivery
 * [GitHub Actions](https://docs.github.com/actions) — scheduled orchestration
@@ -113,7 +114,7 @@ cron (3× weekday mornings, UTC — one combined run)
                  └─ dedup    → suppress URLs seen in the last 3 days
                      └─ enrich   → concurrent article fetch + Trafilatura text (best-effort)
                          └─ script   → one LLM call → 5-8 segments of two-host dialogue
-                             └─ tts      → one request per segment → 24kHz PCM
+                             └─ tts      → selected provider → per-segment 24kHz PCM
                                  └─ audio    → 350ms gaps, loudnorm, mono 64kbps MP3, ID3
                                      └─ deliver  → R2 upload + RSS rebuild
                                          ── or ─→ email the MP3 (--email)
@@ -159,10 +160,11 @@ environment and are never defaulted to a literal.
 
 * Python 3.11 or newer
 * `ffmpeg` and `ffprobe` on `PATH`
+* `espeak-ng` on `PATH` only when using Kokoro
 
   ```sh
-  brew install ffmpeg          # macOS
-  sudo apt-get install ffmpeg  # Debian/Ubuntu
+  brew install ffmpeg espeak-ng                    # macOS, both providers ready
+  sudo apt-get install ffmpeg espeak-ng             # Debian/Ubuntu, both providers ready
   ```
 
 ### Installation
@@ -176,6 +178,8 @@ environment and are never defaulted to a literal.
    ```sh
    python3.11 -m venv .venv && source .venv/bin/activate
    pip install -r requirements-dev.txt
+   # Kokoro only:
+   pip install -r requirements-kokoro.txt
    ```
 3. Copy the environment template and fill in what the stage you're running needs
    ```sh
@@ -198,7 +202,7 @@ win over it. In CI these are GitHub repository secrets.
 | Variable | Needed by | Where it comes from |
 |---|---|---|
 | `OPENROUTER_API_KEY` | script | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| `GEMINI_API_KEY` | tts | [aistudio.google.com](https://aistudio.google.com/) |
+| `GEMINI_API_KEY` | tts (`TTS_PROVIDER=gemini` only) | [aistudio.google.com](https://aistudio.google.com/) |
 | `R2_ACCOUNT_ID` | publish | Cloudflare dashboard |
 | `R2_ACCESS_KEY_ID` | publish | Cloudflare R2 API token |
 | `R2_SECRET_ACCESS_KEY` | publish | Cloudflare R2 API token |
@@ -211,10 +215,12 @@ win over it. In CI these are GitHub repository secrets.
 | `EMAIL_TO` | `--email` | Recipient. Comma-separated for several. |
 | `ALERT_WEBHOOK_URL` | CI alerting | Slack / Discord / ntfy |
 
-Optional overrides: `SCRIPT_MODEL`, `SCRIPT_PROVIDER`, `TTS_MODEL`,
-`TTS_VOICE_A`, `TTS_VOICE_B`, `OPENROUTER_BASE_URL`, `SMTP_PORT` (default
-`465`), `SMTP_USE_SSL` (default `true`; `false` uses STARTTLS), `EMAIL_FROM`
-(defaults to `SMTP_USERNAME`).
+Optional overrides: `SCRIPT_MODEL`, `SCRIPT_PROVIDER`, `TTS_PROVIDER` (default
+`gemini`; also supports `kokoro`), Gemini's `TTS_MODEL`, `TTS_VOICE_A`, and
+`TTS_VOICE_B`, Kokoro's `KOKORO_LANG_CODE`, `KOKORO_VOICE_A`,
+`KOKORO_VOICE_B`, and `KOKORO_SPEED`, plus `OPENROUTER_BASE_URL`, `SMTP_PORT`
+(default `465`), `SMTP_USE_SSL` (default `true`; `false` uses STARTTLS), and
+`EMAIL_FROM` (defaults to `SMTP_USERNAME`).
 
 R2 and SMTP are alternatives, not both — you only need the credentials for the
 delivery path you actually use.
@@ -259,10 +265,17 @@ python main.py --stage parse              # no credentials needed
 python main.py --bundle daily --stage combine   # no credentials; shows coverage + merges
 python main.py --stage enrich             # no credentials; adds article text + success rate
 python main.py --stage script             # needs OPENROUTER_API_KEY
-python main.py --stage audio --no-upload  # needs GEMINI_API_KEY + ffmpeg; MP3 to ./out
+python main.py --stage audio --no-upload  # selected TTS provider + ffmpeg; MP3 to ./out
 python main.py --stage publish            # full run; needs R2
 python main.py --email                    # full run, emailed instead; needs SMTP
+
+TTS_PROVIDER=gemini python main.py --stage audio --no-upload
+TTS_PROVIDER=kokoro python main.py --stage audio --no-upload
 ```
+
+Kokoro runs locally, needs no API key, and synthesizes each dialogue line with
+its speaker voice. Gemini remains the default and renders each segment in one
+multi-speaker request.
 
 ### Delivery
 
@@ -349,6 +362,14 @@ repository **variables** (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_SSL`), while
 credentials and addresses are **secrets** (`SMTP_USERNAME`, `SMTP_PASSWORD`,
 `EMAIL_FROM`, `EMAIL_TO`).
 
+**TTS selection is controlled independently by the `TTS_PROVIDER` repository
+variable.** Set it to `gemini` (the default) or `kokoro`. The workflow passes the
+value to both delivery paths; when Kokoro is selected for an audio stage it
+installs the optional provider lock, a CPU-only PyTorch wheel, and `espeak-ng`,
+then restores the Hugging Face model cache. Adding another provider
+means implementing `TTSProvider`, registering its factory in `src/tts.py`, and
+adding only its provider-specific setup.
+
 Run artifacts — the HTML snapshot and the script JSON, never the MP3 — upload on
 `always()`. Especially on failure, since the snapshot is what you read when
 parsing breaks.
@@ -364,7 +385,7 @@ say so if you do.
 | Decision | Choice | Why |
 |---|---|---|
 | Content source | `tldr.tech/api/latest/<edition>` (public web) | No Gmail OAuth, no IMAP, no email parsing. Cleaner HTML than the email, and the redirect removes all date math. |
-| Audio generation | Gemini multi-speaker TTS | NotebookLM has no public consumer API; its programmatic path is enterprise-only. Browser-automation wrappers are fragile and were explicitly rejected. |
+| Audio generation | Pluggable `TTSProvider`; Gemini default, local Kokoro optional | Gemini preserves cross-speaker prosody; Kokoro removes API cost and credentials. Provider selection stays outside orchestration. |
 | Script generation | OpenRouter, `deepseek/deepseek-v3.2` | Cheap open-weight inference that runs from CI while preserving control over length, structure, tone, and structured output. |
 | Orchestration | GitHub Actions | Free, built-in cron, secrets, logs, artifacts. No server to patch. |
 | Storage + delivery | Cloudflare R2 + private RSS | Effectively free at this volume, S3-compatible, no egress fees, any podcast app can subscribe. |
@@ -388,18 +409,21 @@ Consequences worth knowing before you change something:
   paywall marker phrase counts as a failure. Failures fall back to the TLDR
   blurb with `enriched: false`. **No item is ever dropped, and a failed fetch
   never fails the run.**
-* **One TTS request per segment, never one per episode.** Gemini's own guidance
-  is that quality drifts past a few minutes. Segments are 60-120s, retried up to
-  3× with backoff, then dropped individually if they still fail.
+* **The retry and failure boundary is one segment, never one episode.** Gemini
+  sends one multi-speaker request per segment because quality drifts on long
+  outputs. Kokoro renders individual lines locally and joins them inside the
+  provider, then returns the same per-segment PCM contract. Segments are retried
+  up to 3× with backoff, then dropped individually if they still fail.
 * **Word count is a proxy, duration is the gate.** Target 1,350-1,450 words;
   accept 1,200-1,600 with a warning; hard-fail below 1,100 or above 1,700. The
   real requirement is the 8-12 minute ffprobe duration. Never fix duration by
   speeding up playback.
 * **The feed is rebuilt, not appended.** Regenerating from the full object
   listing is idempotent and self-healing.
-* **The TTS layer sits behind a `TTSProvider` protocol** so swapping providers
-  is a one-file change. ElevenLabs is the documented fallback if Gemini voice
-  quality disappoints.
+* **The TTS layer sits behind a segment-oriented `TTSProvider` protocol.**
+  Provider implementations and the registry live in `src/tts.py`; `main.py`
+  only asks the factory for the configured provider. Both current providers
+  return 24kHz signed 16-bit mono PCM, so `src/audio.py` stays provider-agnostic.
 * **The delivered identity is part of every persistent name.** For scheduled
   runs that identity is the bundle, `daily`; for single-edition runs it is the
   edition slug. Object keys, markers, filenames, feed GUIDs, dedup state,
@@ -455,7 +479,7 @@ hasn't been exercised against live services:
 | Parse | **Verified live** (2026-08-21) — 14 items parsed, 3 sponsors dropped, real edition committed as a fixture |
 | Enrich | **Verified live** (2026-08-22) — 12/14 enriched (85.7%); 2 clean blurb fallbacks, 0 items lost |
 | Script | **Verified and owner-approved** (2026-08-22) — grounded 1,142-word script across 7 segments for $0.0077 |
-| Audio | **Verified and owner-approved** (2026-08-22) — 7/7 segments rendered, 3.44 MB mono 64kbps MP3, heard end-to-end |
+| Audio | **Gemini verified and owner-approved** (2026-08-22) — 7/7 segments rendered, 3.44 MB mono 64kbps MP3, heard end-to-end. Kokoro is fake-tested only. |
 | Publish (R2) | Feed generation and retention tested in isolation. **Never uploaded to R2.** |
 | Deliver (email) | **Verified live** (2026-08-23) — episode delivered end-to-end as an SMTP attachment |
 | Automate | **Verified live** (2026-08-27) — manual and scheduled runs exercised; GitHub later delayed/dropped cron events, motivating the external fallback design. |
@@ -482,6 +506,8 @@ Notes from those runs, worth carrying forward:
       attachment instead of publishing to R2
 - [x] **Gemini TTS model ID and voice names verified** against a live
       `models.list` call and a full 7/7 segment render
+- [x] **Pluggable TTS providers** — `TTS_PROVIDER` selects Gemini or local
+      Kokoro without changing orchestration or audio assembly
 - [x] **One combined daily episode** — `--bundle daily` merges the day's Tech,
       AI, Web Dev, and Fintech editions into a single briefing
 - [ ] First live R2 upload and a feed that validates in a real podcast app
@@ -494,13 +520,16 @@ deep links beyond the description list, any web UI.
 
 ### Known gaps
 
-* `src/config.py` pins `gemini-2.5-flash-preview-tts` and voices `Kore` / `Algenib`.
+* Gemini pins `gemini-2.5-flash-preview-tts` and voices `Kore` / `Algenib`.
   `Kore` and prior default `Puck` were rendered successfully on 2026-08-22.
-  `Algenib` is listed in Gemini's current voice library but has not yet been rendered
-  by this project. **Model IDs still churn,
-  and this one is a `-preview-` ID**, so re-check before assuming it works, and
-  override with `TTS_MODEL` / `TTS_VOICE_A` / `TTS_VOICE_B` rather than editing
-  the file.
+  `Algenib` is listed in Gemini's current voice library but has not yet been
+  rendered by this project. **Model IDs still churn, and this one is a
+  `-preview-` ID**, so re-check before assuming it works, and override with
+  `TTS_MODEL` / `TTS_VOICE_A` / `TTS_VOICE_B` rather than editing the file.
+* Kokoro uses the pinned `kokoro==0.9.4` package with `af_heart` / `am_michael`.
+  Its interface, PCM conversion, voice routing, dependency selection, and
+  failure behavior are tested with fakes, but no full episode has been rendered
+  or heard with Kokoro yet.
 * API pricing drifts. Verify it rather than assuming; per-run token and character
   counts are logged so actual spend is visible.
 * There is no `LICENSE` file in the repository. See [License](#license).
@@ -550,6 +579,6 @@ Project Link: [https://github.com/nicholas-fierro/tldr-daily-podcast](https://gi
 [workflow-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/actions/workflows/daily.yml
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue?style=for-the-badge
 [python-url]: https://www.python.org/
-[tests-shield]: https://img.shields.io/badge/tests-191%20passing-brightgreen?style=for-the-badge
+[tests-shield]: https://img.shields.io/badge/tests-200%20passing-brightgreen?style=for-the-badge
 [tests-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/tree/main/tests
 [python-badge]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white

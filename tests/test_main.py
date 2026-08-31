@@ -137,7 +137,7 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
         "generate_script",
         lambda enriched, date, *, edition, sources=None: episode_script,
     )
-    monkeypatch.setattr(main.tts, "GeminiTTS", lambda: object())
+    monkeypatch.setattr(main.tts, "create_provider", lambda: object())
     monkeypatch.setattr(main.tts, "render_segments", lambda generated, provider: [object()])
     monkeypatch.setattr(
         main.audio,
@@ -366,7 +366,7 @@ def test_bundle_identity_is_used_for_delivery(monkeypatch, tmp_path, capsys):
         return episode_script
 
     monkeypatch.setattr(main.script, "generate_script", capture_script)
-    monkeypatch.setattr(main.tts, "GeminiTTS", lambda: object())
+    monkeypatch.setattr(main.tts, "create_provider", lambda: object())
     monkeypatch.setattr(main.tts, "render_segments", lambda generated, provider: [object()])
     monkeypatch.setattr(
         main.audio,

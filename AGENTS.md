@@ -45,8 +45,10 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 - **All tunables live in `src/config.py`** — voices, word targets, model IDs,
   thresholds. If you find yourself typing a magic number into a stage module,
   it belongs in config instead.
-- **Keep TTS behind the `TTSProvider` protocol** in `src/tts.py`. Swapping
-  providers must remain a one-file change. ElevenLabs is the documented fallback.
+- **Keep TTS behind the segment-oriented `TTSProvider` protocol** in `src/tts.py`.
+  Provider implementations and the registry live there; `main.py` must only use
+  the factory. Every provider returns 24kHz signed 16-bit mono PCM so audio
+  assembly stays provider-agnostic.
 - **The delivered identity is part of every persistent name.** Scheduled runs
   produce one combined episode under the bundle identity `daily`; single-edition
   runs use the edition slug. Object keys, delivery markers, local filenames,
@@ -78,15 +80,15 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 191 passing as of the current implementation
+pytest -q          # 200 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
   `tests/fixtures/tldr-2026-08-21.html`, a real captured edition. If you touch
   the parser, this is the test that has to convince you.
-- Network, R2, OpenRouter, Gemini, and SMTP are all faked in tests. **Don't add a
-  test that makes a live API call or sends a real message.** If you need new
-  behavior from a provider, extend the fake.
+- Network, R2, OpenRouter, Gemini, Kokoro, and SMTP are all faked in tests.
+  **Don't add a test that makes a live API call, loads real model weights, or
+  sends a real message.** If you need new provider behavior, extend the fake.
 - When a live run teaches you something about the real world — a new page shape,
   a new paywall marker, a provider quirk — capture it as a fixture or a config
   constant, not as a comment.
@@ -98,9 +100,9 @@ pytest -q          # 191 passing as of the current implementation
 - **Verify anything external before trusting a document — including this one.**
   TLDR's page structure, Gemini TTS model IDs and voice names, and API pricing
   all drift. The README marks each place this matters.
-- **Prefer an environment override to editing a pinned value.** `TTS_MODEL`,
-  `TTS_VOICE_A`, `TTS_VOICE_B`, and `SCRIPT_MODEL` exist so that re-checking a
-  churning external ID stays cheap.
+- **Prefer an environment override to editing a pinned value.** `TTS_PROVIDER`,
+  provider-specific TTS settings, and `SCRIPT_MODEL` exist so that switching or
+  re-checking a churning external ID stays cheap.
 - **Run the cheap stages first.** `--stage parse` and `--stage enrich` need no
   credentials and cost nothing. Get those right before spending tokens.
 - **Read the snapshot when parsing breaks.** Every run writes the raw HTML of
@@ -121,13 +123,14 @@ pytest -q          # 191 passing as of the current implementation
 ```sh
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt       # ffmpeg must also be on PATH
+pip install -r requirements-kokoro.txt    # Kokoro only; espeak-ng must be on PATH
 pytest -q
 
 python main.py --bundle daily --stage combine   # free; the combined running order
 python main.py --stage parse              # free, no credentials
 python main.py --stage enrich             # free, no credentials
 python main.py --stage script             # OPENROUTER_API_KEY
-python main.py --stage audio --no-upload  # GEMINI_API_KEY + ffmpeg, MP3 to ./out
+python main.py --stage audio --no-upload  # selected TTS provider + ffmpeg, MP3 to ./out
 python main.py --email                    # full run, emailed instead of published
 python main.py --date YYYY-MM-DD          # re-run a past edition
 ```
@@ -149,9 +152,10 @@ building on top of them.
   `.github/workflows/daily.yml`; CI resolves the target date before dependency
   setup. Run the pipeline with `--email` outside that
   workflow and nothing stops a repeat send.
-- **`ENABLE_R2_PUBLISH` selects the CI path** — `true` publishes to R2, anything
-  else emails. SMTP connection settings are repository *variables*; credentials
-  and addresses are *secrets*. Keep that split when touching the workflow.
+- **Repository variables select independent runtime paths.** `ENABLE_R2_PUBLISH`
+  selects R2 (`true`) or email; `TTS_PROVIDER` selects Gemini (default) or
+  Kokoro. SMTP connection settings and `TTS_PROVIDER` are repository *variables*;
+  credentials and addresses are *secrets*. Keep that split in the workflow.
 - **The combined episode has not been heard.** `--bundle daily` is verified live
   through `--stage combine` only. The 28-item cap (`BUNDLE_ITEM_CAP`) and the
   combined-briefing prompt instructions are both untested against a real listen;

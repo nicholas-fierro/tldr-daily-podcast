@@ -4,6 +4,8 @@ Exercised against a fake provider — the real one needs a key and is what M4's
 listen-through checkpoint is for.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from src import config, tts
@@ -30,9 +32,9 @@ class FakeProvider:
         self.calls = 0
         self.transient_left = fail_times
 
-    def synthesize(self, text: str) -> bytes:
+    def synthesize(self, segment: Segment) -> bytes:
         self.calls += 1
-        index = int(text.rsplit("about story ", 1)[-1].split(".")[0])
+        index = int(segment.topic.rsplit("-", 1)[-1])
         if index in self.fail_always:
             raise RuntimeError("response contained no audio data")
         if self.transient_left:
@@ -58,6 +60,123 @@ def test_segment_is_formatted_as_a_speaker_transcript():
 def test_style_direction_prefixes_every_segment():
     text = tts.format_segment(script_with(1).segments[0])
     assert text.startswith(config.TTS_STYLE_DIRECTION)
+
+
+def test_gemini_formats_the_structured_segment_for_its_request():
+    captured = {}
+
+    class Models:
+        @staticmethod
+        def generate_content(**kwargs):
+            captured.update(kwargs)
+            part = SimpleNamespace(inline_data=SimpleNamespace(data=b"pcm"))
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))]
+            )
+
+    provider = tts.GeminiTTS.__new__(tts.GeminiTTS)
+    provider.model = "test-model"
+    provider.client = SimpleNamespace(models=Models())
+    provider._genai = SimpleNamespace(
+        types=SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs)
+    )
+    provider._speaker_config = lambda: "speaker-config"
+    segment = script_with(1).segments[0]
+
+    assert provider.synthesize(segment) == b"pcm"
+    assert captured["contents"] == tts.format_segment(segment)
+    assert captured["model"] == "test-model"
+
+
+def test_provider_factory_uses_selected_registry_entry(monkeypatch):
+    provider = object()
+    monkeypatch.setattr(config, "TTS_PROVIDER", "FAKE")
+    monkeypatch.setitem(tts.TTS_PROVIDERS, "fake", lambda: provider)
+    assert tts.create_provider() is provider
+
+
+def test_provider_factory_rejects_unknown_provider():
+    with pytest.raises(tts.TTSError, match="unsupported TTS_PROVIDER"):
+        tts.create_provider("unknown")
+
+
+def test_render_segments_passes_structured_segment_to_provider():
+    received = []
+
+    class CapturingProvider:
+        def synthesize(self, segment):
+            received.append(segment)
+            return b"audio"
+
+    source = script_with(1)
+    tts.render_segments(source, CapturingProvider())
+    assert received == [source.segments[0]]
+
+
+def test_kokoro_renders_each_speaker_with_its_configured_voice():
+    calls = []
+
+    def pipeline(text, voice, speed):
+        calls.append((text, voice, speed))
+        yield text, "phonemes", [0.0, 0.5, -0.5]
+
+    segment = Segment(topic="topic", lines=[
+        Line(speaker=config.HOST_A, text="First line."),
+        Line(speaker=config.HOST_B, text="Second line."),
+    ])
+    provider = tts.KokoroTTS(
+        pipeline=pipeline,
+        voice_a="voice-a",
+        voice_b="voice-b",
+        speed=1.25,
+    )
+
+    pcm = provider.synthesize(segment)
+
+    assert calls == [
+        ("First line.", "voice-a", 1.25),
+        ("Second line.", "voice-b", 1.25),
+    ]
+    line_pcm = b"\x00\x00\xff\x3f\x01\xc0"
+    gap_frames = int(config.TTS_SAMPLE_RATE * config.TTS_LINE_GAP_MS / 1000)
+    gap = b"\x00" * (gap_frames * config.TTS_SAMPLE_WIDTH * config.TTS_CHANNELS)
+    assert pcm == line_pcm + gap + line_pcm
+
+
+def test_kokoro_converts_torch_tensor_audio_without_astype():
+    """Kokoro yields torch.Tensor, which has .clip() but not .astype().
+
+    No real torch or numpy here — the base test job never installs the
+    optional Kokoro extras, so the fake must stand entirely on its own.
+    """
+
+    class FakeTensor:
+        def __init__(self, values):
+            self.values = values
+
+        def detach(self):
+            return self
+
+        def numpy(self):
+            return list(self.values)
+
+    def pipeline(text, voice, speed):
+        yield text, "phonemes", FakeTensor([0.0, 0.5, -0.5])
+
+    segment = Segment(topic="topic", lines=[Line(speaker=config.HOST_A, text="Hi.")])
+    provider = tts.KokoroTTS(pipeline=pipeline, voice_a="voice-a", voice_b="voice-b")
+
+    pcm = provider.synthesize(segment)
+
+    assert pcm == b"\x00\x00\xff\x3f\x01\xc0"
+
+
+def test_kokoro_rejects_an_unmapped_speaker():
+    provider = tts.KokoroTTS(pipeline=lambda *args, **kwargs: ())
+    segment = Segment(topic="topic", lines=[Line(speaker="Other", text="Hello")])
+
+    with pytest.raises(tts.TTSError, match="no Kokoro voice configured"):
+        provider.synthesize(segment)
 
 
 # --- retry and drop -------------------------------------------------------
