@@ -158,6 +158,49 @@ def test_masked_feed_url_omits_the_token():
     assert cfg.masked_feed_url == "https://media.example.com/feed-REDACTED.xml"
 
 
+def test_redact_strips_the_token_from_arbitrary_text():
+    cfg = R2Config("a", "k", "s", "b", "https://media.example.com", "sekrit")
+    assert cfg.redact("uploaded feed-sekrit.xml (12 bytes)") == (
+        "uploaded feed-REDACTED.xml (12 bytes)"
+    )
+
+
+# --- the feed key is the token, so uploading it must not log it -------------
+
+class RecordingClient:
+    """Just enough client for upload(): records the put, or raises."""
+
+    def __init__(self, fail: Exception | None = None):
+        self.fail = fail
+        self.put = []
+
+    def put_object(self, Bucket, Key, Body, ContentType):
+        if self.fail:
+            raise self.fail
+        self.put.append(Key)
+
+
+def test_uploading_the_feed_does_not_log_the_token(caplog):
+    with caplog.at_level("INFO", logger="src.publish"):
+        publish.upload(RecordingClient(), CFG, CFG.feed_key, b"<rss/>", "application/rss+xml")
+    assert CFG.feed_token not in caplog.text
+    assert "feed-REDACTED.xml" in caplog.text
+
+
+def test_a_failed_feed_upload_does_not_leak_the_token():
+    client = RecordingClient(fail=RuntimeError(f"denied for key feed-{CFG.feed_token}.xml"))
+    with pytest.raises(publish.PublishError) as excinfo:
+        publish.upload(client, CFG, CFG.feed_key, b"<rss/>", "application/rss+xml")
+    assert CFG.feed_token not in str(excinfo.value)
+
+
+def test_uploading_an_episode_logs_its_key_unchanged(caplog):
+    """Redaction must not mangle keys that never carried the token."""
+    with caplog.at_level("INFO", logger="src.publish"):
+        publish.upload(RecordingClient(), CFG, "episodes/daily/2026-09-08.mp3", b"x", "audio/mpeg")
+    assert "episodes/daily/2026-09-08.mp3" in caplog.text
+
+
 def test_episode_url_contains_edition_and_date():
     assert CFG.episode_url("ai", "2026-08-20") == (
         "https://media.example.com/episodes/ai/2026-08-20.mp3"
