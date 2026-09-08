@@ -151,6 +151,13 @@ def test_feed_url_joins_cleanly():
     assert cfg.feed_url == "https://media.example.com/feed-tok.xml"
 
 
+def test_masked_feed_url_omits_the_token():
+    """CI logs are public. The token must never reach them."""
+    cfg = R2Config("a", "k", "s", "b", "https://media.example.com/", "sekrit")
+    assert "sekrit" not in cfg.masked_feed_url
+    assert cfg.masked_feed_url == "https://media.example.com/feed-REDACTED.xml"
+
+
 def test_episode_url_contains_edition_and_date():
     assert CFG.episode_url("ai", "2026-08-20") == (
         "https://media.example.com/episodes/ai/2026-08-20.mp3"

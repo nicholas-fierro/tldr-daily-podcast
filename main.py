@@ -326,7 +326,7 @@ def run(args: argparse.Namespace) -> int:
     )
     publish.save_episode_meta(client, cfg, episode)
     publish.prune_old_episodes(client, cfg, name)
-    feed_url = publish.publish_feed(
+    publish.publish_feed(
         client,
         cfg,
         publish.load_all_episode_meta(client, cfg),
@@ -341,7 +341,7 @@ def run(args: argparse.Namespace) -> int:
         today,
     )
 
-    log.info("published %s (%.1f min) -> %s", identity, duration / 60, feed_url)
+    log.info("published %s (%.1f min) -> %s", identity, duration / 60, cfg.masked_feed_url)
     return 0
 
 
