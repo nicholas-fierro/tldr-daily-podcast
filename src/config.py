@@ -205,12 +205,19 @@ class R2Config:
     def feed_url(self) -> str:
         return f"{self.public_base_url.rstrip('/')}/{self.feed_key}"
 
+    def redact(self, text: str) -> str:
+        """Strip the feed token out of anything bound for a log or an error
+        message. CI runs in a public repository, so its logs are public, and the
+        unguessable path is the only thing guarding the feed. Every string that
+        can carry the feed key — object keys included — goes through here rather
+        than relying on the platform to redact the secret for us."""
+        return text.replace(self.feed_token, "REDACTED")
+
     @property
     def masked_feed_url(self) -> str:
-        """The feed URL with the token elided. Use this anywhere the value is
-        logged: CI runs in a public repository, so its logs are public. Never
-        rely on the platform redacting the secret for us."""
-        return f"{self.public_base_url.rstrip('/')}/feed-REDACTED.xml"
+        """`feed_url` with the token elided. Derived, so it cannot drift from
+        the real key format."""
+        return self.redact(self.feed_url)
 
     def episode_url(self, edition: str, date: str) -> str:
         key = EPISODE_KEY.format(edition=edition, date=date)

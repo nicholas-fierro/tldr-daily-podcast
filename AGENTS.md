@@ -80,7 +80,7 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 201 passing as of the current implementation
+pytest -q          # 205 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
@@ -146,8 +146,9 @@ building on top of them.
 
 - **Both delivery paths have run live.** Email has been delivered for months; R2
   published its first real episode on 2026-09-08 from a local run — upload, meta,
-  feed rebuild, prune, and dedup state all exercised against a real bucket. CI has
-  not yet run the R2 path (`ENABLE_R2_PUBLISH` is still unset).
+  feed rebuild, prune, and dedup state all exercised against a real bucket.
+  `ENABLE_R2_PUBLISH` was set to `true` on 2026-09-08, but no scheduled run has
+  exercised the R2 path in CI yet.
 - **The email path's idempotency is CI-side, not in the code.** `--email` skips
   R2, so the HEAD-against-the-bucket check isn't available. The guard is the
   `--email-marker` file cached under `emailed-daily-<target-date>` in

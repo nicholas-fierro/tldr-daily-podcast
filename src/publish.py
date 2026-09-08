@@ -111,9 +111,9 @@ def build_feed(episodes: list[Episode], cfg: R2Config, now: datetime | None = No
 def upload(client, cfg: R2Config, key: str, body: bytes, content_type: str) -> None:
     try:
         client.put_object(Bucket=cfg.bucket, Key=key, Body=body, ContentType=content_type)
-        log.info("uploaded %s (%d bytes)", key, len(body))
+        log.info("uploaded %s (%d bytes)", cfg.redact(key), len(body))
     except Exception as exc:  # noqa: BLE001
-        raise PublishError(f"upload of {key} failed: {exc}") from exc
+        raise PublishError(cfg.redact(f"upload of {key} failed: {exc}")) from exc
 
 
 def upload_episode(
