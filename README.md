@@ -3,16 +3,18 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 200 passing][tests-shield]][tests-url]
+[![Tests: 205 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
 <div align="center">
-  <h1 align="center">TLDR Daily Podcast</h1>
+  <h1 align="center">Daily Standup</h1>
 
   <p align="center">
     One two-host audio briefing a day, combining the TLDR Tech, AI, Web Dev, and
     Fintech newsletters — built from the <em>linked articles</em>, not the blurbs.
+    <br />
+    <sub>Not affiliated with or endorsed by TLDR.</sub>
     <br />
     <a href="#how-it-works"><strong>How it works »</strong></a>
     <br />
@@ -234,6 +236,12 @@ delivery path you actually use.
 > `R2_PUBLIC_BASE_URL` cannot be derived from the S3 API endpoint — the RSS
 > `<enclosure>` needs an absolute, publicly reachable URL per MP3, so it must be
 > supplied separately.
+>
+> **Cover art is uploaded by hand, once.** The feed only ever references
+> `artwork/cover.jpg` in the bucket (`ARTWORK_KEY`), so replacing that object
+> changes the artwork everywhere with no feed change and no re-subscribe. Apple
+> wants a square RGB JPEG or PNG, 1400×1400 minimum and 3000×3000 recommended.
+> If the object is missing, clients fall back to a grey placeholder.
 >
 > `FEED_TOKEN` is the random hex in the feed's unguessable path
 > (`feed-<token>.xml`). Changing it changes the feed URL and **silently breaks

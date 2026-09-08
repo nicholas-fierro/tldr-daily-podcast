@@ -56,7 +56,7 @@ def test_wav_header_matches_the_tts_output_format(tmp_path: Path):
 def command(tmp_path: Path) -> list[str]:
     return audio.build_ffmpeg_command(
         tmp_path / "in.wav", tmp_path / "out.mp3",
-        audio.episode_tags("2026-08-20", "TLDR Daily — 2026-08-20"),
+        audio.episode_tags("2026-08-20", "Daily Standup — 2026-08-20"),
     )
 
 
@@ -79,7 +79,7 @@ def test_overwrite_is_forced(command):
 
 def test_tags_are_passed_as_metadata(command):
     pairs = [command[i + 1] for i, arg in enumerate(command) if arg == "-metadata"]
-    assert "title=TLDR Daily — 2026-08-20" in pairs
+    assert "title=Daily Standup — 2026-08-20" in pairs
     assert f"album={config.PODCAST_TITLE}" in pairs
     assert "date=2026-08-20" in pairs
 
@@ -108,7 +108,7 @@ def test_episode_tag_preserves_full_date():
 
 def test_episode_tags_include_edition():
     tags = audio.episode_tags("2026-08-20", "Headline", "webdev")
-    assert tags["comment"] == "TLDR WEBDEV, 2026-08-20"
+    assert tags["comment"] == "Daily Standup WEBDEV, 2026-08-20"
 
 
 def test_build_episode_uses_edition_and_date_filename(monkeypatch, tmp_path):
@@ -126,7 +126,7 @@ def test_build_episode_uses_edition_and_date_filename(monkeypatch, tmp_path):
     mp3, _ = audio.build_episode(
         [segment()],
         "2026-08-20",
-        "TLDR Daily AI — 2026-08-20",
+        "Daily Standup AI — 2026-08-20",
         tmp_path,
         edition="ai",
     )

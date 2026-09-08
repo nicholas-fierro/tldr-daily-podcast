@@ -77,8 +77,8 @@ def test_newest_episode_is_first(feed):
 def test_guids_are_stable_and_unique(feed):
     guids = [item.find("guid").text for item in feed.findall("channel/item")]
     assert guids == [
-        "tldr-daily-tech-2026-08-20",
-        "tldr-daily-tech-2026-08-18",
+        "daily-standup-tech-2026-08-20",
+        "daily-standup-tech-2026-08-18",
     ]
     assert len(set(guids)) == 2
 
@@ -86,8 +86,8 @@ def test_guids_are_stable_and_unique(feed):
 def test_guids_are_unique_across_editions_on_the_same_date():
     episodes = [episode(edition="tech"), episode(edition="ai")]
     assert {item.guid for item in episodes} == {
-        "tldr-daily-tech-2026-08-20",
-        "tldr-daily-ai-2026-08-20",
+        "daily-standup-tech-2026-08-20",
+        "daily-standup-ai-2026-08-20",
     }
 
 
@@ -240,7 +240,7 @@ def test_combined_episodes_use_the_bundle_identity():
     assert CFG.episode_url("daily", "2026-08-28") == (
         "https://media.example.com/episodes/daily/2026-08-28.mp3"
     )
-    assert episode(date="2026-08-28", edition="daily").guid == "tldr-daily-daily-2026-08-28"
+    assert episode(date="2026-08-28", edition="daily").guid == "daily-standup-daily-2026-08-28"
 
 
 def test_snapshots_stay_source_qualified_within_a_bundle():

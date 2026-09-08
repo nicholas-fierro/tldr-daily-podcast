@@ -98,7 +98,7 @@ WEIGHTING. Weight by substance. A major acquisition or a real technical result e
 weak items entirely — a tighter episode is a better episode. Do not give every item a turn.
 
 OPENING. Start the opening segment with a brief, natural two- or three-sentence \
-welcome from one host: welcome the listener back to TLDR Daily, state the edition date \
+welcome from one host: welcome the listener back to {config.PODCAST_TITLE}, state the edition date \
 supplied in the input, then move directly to the day's single biggest story. Keep it \
 concise and do not preview stories covered later. The rest of the opening segment covers \
 that story.

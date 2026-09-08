@@ -81,7 +81,7 @@ def episode_tags(
         "album": config.PODCAST_TITLE,
         "date": date,
         "genre": "Podcast",
-        "comment": f"TLDR {edition_name}, {date}",
+        "comment": f"{config.PODCAST_TITLE} {edition_name}, {date}",
     }
 
 

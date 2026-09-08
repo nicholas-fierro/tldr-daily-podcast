@@ -183,7 +183,7 @@ def test_email_delivery_never_loads_r2(monkeypatch, tmp_path, capsys):
     assert delivered["path"] == mp3
     assert delivered["date"] == edition.date
     assert delivered["edition"] == "tech"
-    assert delivered["headline"] == "TLDR Daily TECH — 2026-08-21"
+    assert delivered["headline"] == "Daily Standup TECH — 2026-08-21"
     assert delivered["config"] == smtp
     assert marker.read_text(encoding="utf-8") == "tech:2026-08-21\n"
     assert (tmp_path / "tech-2026-08-21.html").exists()
@@ -386,7 +386,7 @@ def test_bundle_identity_is_used_for_delivery(monkeypatch, tmp_path, capsys):
     assert scripted["edition"] == "daily"
     assert scripted["sources"] == ["tech", "ai", "webdev"]
     assert delivered["edition"] == "daily"
-    assert delivered["headline"] == "TLDR Daily — 2026-08-28"
+    assert delivered["headline"] == "Daily Standup — 2026-08-28"
     assert [record.edition for record in delivered["coverage"]] == [
         "tech", "ai", "webdev", "fintech",
     ]
