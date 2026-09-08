@@ -80,7 +80,7 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 200 passing as of the current implementation
+pytest -q          # 201 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
@@ -144,8 +144,10 @@ Full flag reference is in the [Usage](README.md#usage) section of the README.
 Recently landed and not yet finished — check the current state of these before
 building on top of them.
 
-- **The email path has been delivered live; the R2 path has not.** R2 has never
-  received an upload and is tested against fakes only.
+- **Both delivery paths have run live.** Email has been delivered for months; R2
+  published its first real episode on 2026-09-08 from a local run — upload, meta,
+  feed rebuild, prune, and dedup state all exercised against a real bucket. CI has
+  not yet run the R2 path (`ENABLE_R2_PUBLISH` is still unset).
 - **The email path's idempotency is CI-side, not in the code.** `--email` skips
   R2, so the HEAD-against-the-bucket check isn't available. The guard is the
   `--email-marker` file cached under `emailed-daily-<target-date>` in
@@ -156,8 +158,8 @@ building on top of them.
   selects R2 (`true`) or email; `TTS_PROVIDER` selects Gemini (default) or
   Kokoro. SMTP connection settings and `TTS_PROVIDER` are repository *variables*;
   credentials and addresses are *secrets*. Keep that split in the workflow.
-- **The combined episode has not been heard.** `--bundle daily` is verified live
-  through `--stage combine` only. The 28-item cap (`BUNDLE_ITEM_CAP`) and the
-  combined-briefing prompt instructions are both untested against a real listen;
-  four sources are roughly twice the input the prompt was tuned on. Expect to
-  adjust the cap or the weighting guidance after the first episode.
+- **The combined episode is validated.** `--bundle daily` has been heard end to
+  end (2026-09-08) and holds up: the 28-item cap (`BUNDLE_ITEM_CAP`) and the
+  combined-briefing prompt needed no adjustment against four sources. Treat both
+  as tuned — change them only with a real listen to justify it, not by reasoning
+  about the item count.

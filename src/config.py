@@ -205,6 +205,13 @@ class R2Config:
     def feed_url(self) -> str:
         return f"{self.public_base_url.rstrip('/')}/{self.feed_key}"
 
+    @property
+    def masked_feed_url(self) -> str:
+        """The feed URL with the token elided. Use this anywhere the value is
+        logged: CI runs in a public repository, so its logs are public. Never
+        rely on the platform redacting the secret for us."""
+        return f"{self.public_base_url.rstrip('/')}/feed-REDACTED.xml"
+
     def episode_url(self, edition: str, date: str) -> str:
         key = EPISODE_KEY.format(edition=edition, date=date)
         return f"{self.public_base_url.rstrip('/')}/{key}"
