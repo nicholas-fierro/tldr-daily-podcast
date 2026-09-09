@@ -126,11 +126,13 @@ jobs:
             ffprobe -version
             exit 0
           fi
-          # ffmpeg comes from Ubuntu archives; Chrome's apt source is unrelated and
-          # has occasionally produced transient hash mismatches on hosted runners.
-          sudo rm -f \
-            /etc/apt/sources.list.d/google-chrome.list \
-            /etc/apt/sources.list.d/google-chrome.sources
+          # ffmpeg comes from the Ubuntu archives. The hosted runner image also
+          # carries Google's Chrome apt source, which has served a corrupt index
+          # ("Hash Sum mismatch") and failed the whole update. Drop it by content
+          # rather than by name — it has shipped as both google-chrome.list and
+          # the deb822 google-chrome.sources.
+          grep -rlF dl.google.com /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f || true
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y ffmpeg; then
@@ -160,11 +162,10 @@ jobs:
             espeak-ng --version
             exit 0
           fi
-          # espeak-ng also comes from Ubuntu archives; avoid unrelated mirror
-          # instability from the Chrome apt source during update/install.
-          sudo rm -f \
-            /etc/apt/sources.list.d/google-chrome.list \
-            /etc/apt/sources.list.d/google-chrome.sources
+          # espeak-ng also comes from the Ubuntu archives; same Chrome apt source
+          # removal as the ffmpeg step above.
+          grep -rlF dl.google.com /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f || true
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y espeak-ng; then
