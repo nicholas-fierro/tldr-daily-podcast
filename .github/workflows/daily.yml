@@ -126,6 +126,11 @@ jobs:
             ffprobe -version
             exit 0
           fi
+          # ffmpeg comes from Ubuntu archives; Chrome's apt source is unrelated and
+          # has occasionally produced transient hash mismatches on hosted runners.
+          sudo rm -f \
+            /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y ffmpeg; then
@@ -155,6 +160,11 @@ jobs:
             espeak-ng --version
             exit 0
           fi
+          # espeak-ng also comes from Ubuntu archives; avoid unrelated mirror
+          # instability from the Chrome apt source during update/install.
+          sudo rm -f \
+            /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.sources
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y espeak-ng; then
