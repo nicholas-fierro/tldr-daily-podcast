@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 205 passing][tests-shield]][tests-url]
+[![Tests: 214 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -221,8 +221,10 @@ Optional overrides: `SCRIPT_MODEL`, `SCRIPT_PROVIDER`, `TTS_PROVIDER` (default
 `gemini`; also supports `kokoro`), Gemini's `TTS_MODEL`, `TTS_VOICE_A`, and
 `TTS_VOICE_B`, Kokoro's `KOKORO_LANG_CODE`, `KOKORO_VOICE_A`,
 `KOKORO_VOICE_B`, and `KOKORO_SPEED`, plus `OPENROUTER_BASE_URL`, `SMTP_PORT`
-(default `465`), `SMTP_USE_SSL` (default `true`; `false` uses STARTTLS), and
-`EMAIL_FROM` (defaults to `SMTP_USERNAME`).
+(default `465`), `SMTP_USE_SSL` (default `true`; `false` uses STARTTLS),
+`EMAIL_FROM` (defaults to `SMTP_USERNAME`), and `PODCAST_OWNER_EMAIL` (unset by
+default; setting it emits `<itunes:owner>`, which Apple needs only for directory
+submission — this feed opts out via `<itunes:block>`).
 
 R2 and SMTP are alternatives, not both — you only need the credentials for the
 delivery path you actually use.

@@ -222,3 +222,23 @@ def test_single_edition_body_is_unchanged(monkeypatch, tmp_path):
     body = send_and_capture(monkeypatch, tmp_path, edition="tech")
     assert "Attached is the Daily Standup TECH episode for 2026-08-28." in body
     assert "Edition coverage" not in body
+
+
+# An emailed episode never sees the RSS show notes, so the email body is the
+# only place the credit and disclaimer can reach the recipient on that path.
+
+def test_single_edition_body_carries_the_attribution(monkeypatch, tmp_path):
+    body = send_and_capture(monkeypatch, tmp_path, edition="tech")
+    assert config.PODCAST_ATTRIBUTION in body
+
+
+def test_combined_body_carries_the_attribution(monkeypatch, tmp_path):
+    from src import combine
+
+    body = send_and_capture(
+        monkeypatch,
+        tmp_path,
+        edition="daily",
+        coverage=[combine.EditionCoverage("tech", combine.INCLUDED, 14)],
+    )
+    assert config.PODCAST_ATTRIBUTION in body
