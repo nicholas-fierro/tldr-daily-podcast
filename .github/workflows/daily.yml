@@ -126,6 +126,9 @@ jobs:
             ffprobe -version
             exit 0
           fi
+          # GitHub-hosted runners can carry a stale Chrome apt source that
+          # intermittently fails apt-get update with Hash Sum mismatch.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y ffmpeg; then
@@ -155,6 +158,8 @@ jobs:
             espeak-ng --version
             exit 0
           fi
+          # Keep apt update focused on Ubuntu sources; Chrome is not needed here.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list
 
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y espeak-ng; then
