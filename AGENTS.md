@@ -42,6 +42,13 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 
 - **One module per stage in `src/`, orchestrated by `main.py`.** A stage does its
   own job and returns data; it doesn't reach into another stage's concerns.
+- **The show's identity lives in `src/config.py`, not in string literals.**
+  `PODCAST_TITLE`, `PODCAST_AUTHOR`, `PODCAST_ATTRIBUTION`, and `GUID_PREFIX`
+  reach the feed, the ID3 tags, the email body, and the spoken welcome in the
+  script prompt. The show is deliberately *not* branded "TLDR" — that is TLDR's
+  mark, and the newsletters are a source, not a partner. References to TLDR that
+  describe the **input** (parser comments, the fetch regex, the prompt's
+  description of what it is reading) are correct and should stay.
 - **All tunables live in `src/config.py`** — voices, word targets, model IDs,
   thresholds. If you find yourself typing a magic number into a stage module,
   it belongs in config instead.
@@ -80,7 +87,7 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 205 passing as of the current implementation
+pytest -q          # 214 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against

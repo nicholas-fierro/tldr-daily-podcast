@@ -36,7 +36,7 @@ class Episode:
 
     @property
     def guid(self) -> str:
-        return f"tldr-daily-{self.edition}-{self.date}"
+        return f"{config.GUID_PREFIX}-{self.edition}-{self.date}"
 
 
 def r2_client(cfg: R2Config):
@@ -60,9 +60,14 @@ def format_duration(seconds: float) -> str:
 
 
 def build_description(items) -> str:
-    """Show notes: the day's stories with URLs, for tapping through in the app."""
+    """Show notes: the day's stories with URLs, for tapping through in the app,
+    followed by the credit and disclaimer."""
     lines = [f"{item.title}\n{item.url}" for item in items]
-    return "Today's stories:\n\n" + "\n\n".join(lines)
+    return (
+        "Today's stories:\n\n"
+        + "\n\n".join(lines)
+        + f"\n\n{config.PODCAST_ATTRIBUTION}"
+    )
 
 
 def build_feed(episodes: list[Episode], cfg: R2Config, now: datetime | None = None) -> str:
@@ -74,19 +79,42 @@ def build_feed(episodes: list[Episode], cfg: R2Config, now: datetime | None = No
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<rss version="2.0" '
         'xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" '
+        'xmlns:atom="http://www.w3.org/2005/Atom" '
         'xmlns:content="http://purl.org/rss/1.0/modules/content/">',
         "<channel>",
         f"<title>{escape(config.PODCAST_TITLE)}</title>",
         f"<description>{escape(config.PODCAST_DESCRIPTION)}</description>",
         f"<link>{escape(cfg.public_base_url)}</link>",
         f"<language>{config.PODCAST_LANGUAGE}</language>",
+        f"<copyright>{escape(config.PODCAST_COPYRIGHT)}</copyright>",
         f"<lastBuildDate>{format_datetime(now)}</lastBuildDate>",
+        f'<atom:link href="{escape(cfg.feed_url)}" rel="self" '
+        'type="application/rss+xml"/>',
         f"<itunes:author>{escape(config.PODCAST_AUTHOR)}</itunes:author>",
         f"<itunes:summary>{escape(config.PODCAST_DESCRIPTION)}</itunes:summary>",
+        "<itunes:type>episodic</itunes:type>",
         "<itunes:explicit>false</itunes:explicit>",
         '<itunes:category text="Technology"/>',
+        # Artwork. Without this a client shows a grey placeholder, which is the
+        # single biggest reason a private feed looks unfinished.
+        f'<itunes:image href="{escape(cfg.artwork_url)}"/>',
+        "<image>",
+        f"<url>{escape(cfg.artwork_url)}</url>",
+        f"<title>{escape(config.PODCAST_TITLE)}</title>",
+        f"<link>{escape(cfg.public_base_url)}</link>",
+        "</image>",
         "<itunes:block>Yes</itunes:block>",  # personal feed: keep it out of directories
     ]
+
+    # Apple only needs an owner for directory submission, which this feed opts
+    # out of. Emitted only when an address is deliberately configured.
+    if config.PODCAST_OWNER_EMAIL:
+        parts += [
+            "<itunes:owner>",
+            f"<itunes:name>{escape(config.PODCAST_OWNER_NAME)}</itunes:name>",
+            f"<itunes:email>{escape(config.PODCAST_OWNER_EMAIL)}</itunes:email>",
+            "</itunes:owner>",
+        ]
 
     for episode in ordered:
         published = datetime.strptime(episode.date, "%Y-%m-%d").replace(
@@ -99,6 +127,8 @@ def build_feed(episodes: list[Episode], cfg: R2Config, now: datetime | None = No
             f"<pubDate>{format_datetime(published)}</pubDate>",
             f"<description>{escape(episode.description)}</description>",
             f"<itunes:duration>{format_duration(episode.duration_s)}</itunes:duration>",
+            f'<itunes:image href="{escape(cfg.artwork_url)}"/>',
+            "<itunes:explicit>false</itunes:explicit>",
             f'<enclosure url="{escape(episode.url)}" '
             f'length="{episode.size_bytes}" type="audio/mpeg"/>',
             "</item>",

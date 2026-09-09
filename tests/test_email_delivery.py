@@ -69,7 +69,7 @@ def test_ssl_delivery_attaches_mp3(monkeypatch, tmp_path):
     email_delivery.send_episode(
         mp3,
         "2026-08-21",
-        "TLDR Daily AI — 2026-08-21",
+        "Daily Standup AI — 2026-08-21",
         smtp_config(recipient="one@example.com, two@example.com"),
         edition="ai",
     )
@@ -80,8 +80,8 @@ def test_ssl_delivery_attaches_mp3(monkeypatch, tmp_path):
     assert server.login_args == ("sender@example.com", "secret")
     assert server.from_addr == "podcast@example.com"
     assert server.to_addrs == ["one@example.com", "two@example.com"]
-    assert server.message["Subject"] == "TLDR Daily AI — 2026-08-21"
-    assert "TLDR AI podcast episode" in server.message.get_body().get_content()
+    assert server.message["Subject"] == "Daily Standup AI — 2026-08-21"
+    assert "Daily Standup AI episode" in server.message.get_body().get_content()
     attachment = next(server.message.iter_attachments())
     assert attachment.get_content_type() == "audio/mpeg"
     assert attachment.get_filename() == "episode.mp3"
@@ -184,7 +184,7 @@ def send_and_capture(monkeypatch, tmp_path, **kwargs):
     email_delivery.send_episode(
         mp3,
         "2026-08-28",
-        "TLDR Daily — 2026-08-28",
+        "Daily Standup — 2026-08-28",
         smtp_config(),
         **kwargs,
     )
@@ -220,5 +220,25 @@ def test_body_reports_included_and_missing_sources(monkeypatch, tmp_path):
 
 def test_single_edition_body_is_unchanged(monkeypatch, tmp_path):
     body = send_and_capture(monkeypatch, tmp_path, edition="tech")
-    assert "Attached is the TLDR TECH podcast episode for 2026-08-28." in body
+    assert "Attached is the Daily Standup TECH episode for 2026-08-28." in body
     assert "Edition coverage" not in body
+
+
+# An emailed episode never sees the RSS show notes, so the email body is the
+# only place the credit and disclaimer can reach the recipient on that path.
+
+def test_single_edition_body_carries_the_attribution(monkeypatch, tmp_path):
+    body = send_and_capture(monkeypatch, tmp_path, edition="tech")
+    assert config.PODCAST_ATTRIBUTION in body
+
+
+def test_combined_body_carries_the_attribution(monkeypatch, tmp_path):
+    from src import combine
+
+    body = send_and_capture(
+        monkeypatch,
+        tmp_path,
+        edition="daily",
+        coverage=[combine.EditionCoverage("tech", combine.INCLUDED, 14)],
+    )
+    assert config.PODCAST_ATTRIBUTION in body

@@ -112,7 +112,7 @@ OPENROUTER_BASE_URL = os.environ.get(
 OPENROUTER_REFERER = os.environ.get(
     "OPENROUTER_REFERER", "https://github.com/nicholas-fierro/tldr-daily-podcast"
 ).strip()
-OPENROUTER_TITLE = os.environ.get("OPENROUTER_TITLE", "TLDR Daily Podcast").strip()
+OPENROUTER_TITLE = os.environ.get("OPENROUTER_TITLE", "Daily Standup Podcast").strip()
 
 HOST_A = "Ava"  # frames, asks, drives the running order
 HOST_B = "Ben"  # explains, contextualizes, supplies the numbers
@@ -164,13 +164,38 @@ MP3_BITRATE = "64k"
 DURATION_MIN_S = 8 * 60
 DURATION_MAX_S = 12 * 60
 
-PODCAST_TITLE = "TLDR Daily"
-PODCAST_AUTHOR = "TLDR Daily (generated)"
+PODCAST_TITLE = "Daily Standup"
+PODCAST_AUTHOR = "Nicholas Fierro"
 PODCAST_DESCRIPTION = (
-    "Two-host briefings from TLDR newsletters, built from the linked articles "
-    "rather than the summaries."
+    "A two-host tech briefing, every weekday morning. Stories are selected from "
+    "the TLDR newsletters and reported from the linked articles rather than the "
+    "summaries. Episodes are generated automatically. Not affiliated with or "
+    "endorsed by TLDR."
 )
 PODCAST_LANGUAGE = "en-us"
+PODCAST_OWNER_NAME = "Nicholas Fierro"
+# Apple wants an owner address only for directory submission, which this feed
+# opts out of via <itunes:block>. Left unset so a personal address does not ship
+# in a file every subscriber can read; set it if the show is ever submitted.
+PODCAST_OWNER_EMAIL = os.environ.get("PODCAST_OWNER_EMAIL", "").strip()
+PODCAST_COPYRIGHT = "(c) Nicholas Fierro"
+
+# Credit and disclaimer, carried in the channel description and in every
+# episode's show notes. The selection is TLDR's work; say so where a listener
+# will actually see it.
+PODCAST_ATTRIBUTION = (
+    "Story selection derives from the TLDR newsletters (https://tldr.tech). "
+    "This show is not affiliated with or endorsed by TLDR. Episodes are "
+    "generated automatically — check the linked source before relying on a detail."
+)
+
+# Cover art. Square, 1400x1400 minimum and 3000x3000 recommended, RGB JPEG or
+# PNG. Uploaded once by hand; the feed only ever references it.
+ARTWORK_KEY = "artwork/cover.jpg"
+
+# Prefix for feed GUIDs. Persistent and published, though never displayed:
+# changing it makes every subscribed client re-download the back catalogue once.
+GUID_PREFIX = "daily-standup"
 
 # --- publish --------------------------------------------------------------
 
@@ -218,6 +243,10 @@ class R2Config:
         """`feed_url` with the token elided. Derived, so it cannot drift from
         the real key format."""
         return self.redact(self.feed_url)
+
+    @property
+    def artwork_url(self) -> str:
+        return f"{self.public_base_url.rstrip('/')}/{ARTWORK_KEY}"
 
     def episode_url(self, edition: str, date: str) -> str:
         key = EPISODE_KEY.format(edition=edition, date=date)

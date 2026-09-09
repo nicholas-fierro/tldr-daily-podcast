@@ -53,6 +53,60 @@ def test_personal_feed_is_blocked_from_directories(feed):
     assert feed.find(f"channel/{ITUNES}block").text == "Yes"
 
 
+# --- artwork and the rest of the channel ----------------------------------
+#
+# Cover art is the difference between a finished-looking show and a grey
+# placeholder, and none of it is exercised anywhere else.
+
+def test_channel_carries_cover_art_in_both_forms(feed):
+    """iTunes reads <itunes:image>; older RSS clients read <image>."""
+    channel = feed.find("channel")
+    assert channel.find(f"{ITUNES}image").get("href") == CFG.artwork_url
+    assert channel.find("image/url").text == CFG.artwork_url
+    assert channel.find("image/title").text == config.PODCAST_TITLE
+
+
+def test_artwork_url_is_absolute_and_under_the_public_host(feed):
+    href = feed.find(f"channel/{ITUNES}image").get("href")
+    assert href.startswith("https://")
+    assert href == f"{CFG.public_base_url}/{config.ARTWORK_KEY}"
+
+
+def test_channel_declares_copyright_and_episodic_type(feed):
+    channel = feed.find("channel")
+    assert channel.find("copyright").text == config.PODCAST_COPYRIGHT
+    assert channel.find(f"{ITUNES}type").text == "episodic"
+
+
+def test_channel_has_an_atom_self_link(feed):
+    link = feed.find("channel/{http://www.w3.org/2005/Atom}link")
+    assert link.get("rel") == "self"
+    assert link.get("type") == "application/rss+xml"
+    assert link.get("href") == CFG.feed_url
+
+
+def test_every_item_carries_artwork_and_an_explicit_flag(feed):
+    items = feed.findall("channel/item")
+    assert items
+    for item in items:
+        assert item.find(f"{ITUNES}image").get("href") == CFG.artwork_url
+        assert item.find(f"{ITUNES}explicit").text == "false"
+
+
+def test_owner_is_omitted_without_a_configured_address(feed):
+    """A personal address must not ship in the feed unless asked for."""
+    assert feed.find(f"channel/{ITUNES}owner") is None
+
+
+def test_owner_is_emitted_when_an_address_is_configured(monkeypatch):
+    monkeypatch.setattr(config, "PODCAST_OWNER_EMAIL", "owner@example.com")
+    xml = publish.build_feed([episode()], CFG)
+    owner = ElementTree.fromstring(xml).find(f"channel/{ITUNES}owner")
+    assert owner is not None
+    assert owner.find(f"{ITUNES}name").text == config.PODCAST_OWNER_NAME
+    assert owner.find(f"{ITUNES}email").text == "owner@example.com"
+
+
 # --- enclosures -----------------------------------------------------------
 
 def test_enclosure_has_url_length_and_type(feed):
@@ -77,8 +131,8 @@ def test_newest_episode_is_first(feed):
 def test_guids_are_stable_and_unique(feed):
     guids = [item.find("guid").text for item in feed.findall("channel/item")]
     assert guids == [
-        "tldr-daily-tech-2026-08-20",
-        "tldr-daily-tech-2026-08-18",
+        "daily-standup-tech-2026-08-20",
+        "daily-standup-tech-2026-08-18",
     ]
     assert len(set(guids)) == 2
 
@@ -86,8 +140,8 @@ def test_guids_are_stable_and_unique(feed):
 def test_guids_are_unique_across_editions_on_the_same_date():
     episodes = [episode(edition="tech"), episode(edition="ai")]
     assert {item.guid for item in episodes} == {
-        "tldr-daily-tech-2026-08-20",
-        "tldr-daily-ai-2026-08-20",
+        "daily-standup-tech-2026-08-20",
+        "daily-standup-ai-2026-08-20",
     }
 
 
@@ -240,7 +294,7 @@ def test_combined_episodes_use_the_bundle_identity():
     assert CFG.episode_url("daily", "2026-08-28") == (
         "https://media.example.com/episodes/daily/2026-08-28.mp3"
     )
-    assert episode(date="2026-08-28", edition="daily").guid == "tldr-daily-daily-2026-08-28"
+    assert episode(date="2026-08-28", edition="daily").guid == "daily-standup-daily-2026-08-28"
 
 
 def test_snapshots_stay_source_qualified_within_a_bundle():

@@ -9,7 +9,7 @@ import smtplib
 import ssl
 
 from .combine import EditionCoverage, coverage_summary
-from .config import EDITION, SMTPConfig
+from .config import EDITION, PODCAST_ATTRIBUTION, PODCAST_TITLE, SMTPConfig
 
 log = logging.getLogger(__name__)
 
@@ -26,13 +26,20 @@ def _recipients(value: str) -> list[str]:
 
 
 def _body(date: str, edition: str, coverage: list[EditionCoverage] | None) -> str:
-    """Coverage is reported in full: a missing source must never be silent."""
+    """Coverage is reported in full: a missing source must never be silent.
+
+    The attribution closes both variants. An emailed episode never sees the RSS
+    show notes, so this is the only place the credit and disclaimer reach a
+    recipient on that path.
+    """
     if coverage is None:
-        return f"Attached is the TLDR {edition.upper()} podcast episode for {date}.\n"
-    return (
-        f"Attached is the combined TLDR podcast episode for {date}.\n\n"
-        f"{coverage_summary(coverage)}\n"
-    )
+        opening = f"Attached is the {PODCAST_TITLE} {edition.upper()} episode for {date}.\n"
+    else:
+        opening = (
+            f"Attached is the combined {PODCAST_TITLE} episode for {date}.\n\n"
+            f"{coverage_summary(coverage)}\n"
+        )
+    return f"{opening}\n{PODCAST_ATTRIBUTION}\n"
 
 
 def send_episode(
