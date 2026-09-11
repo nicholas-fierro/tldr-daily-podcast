@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-11",
+  "word_count": 294,
+  "segments": [
+    {
+      "topic": "northwind-harbor-acquisition",
+      "lines": [
+        {
+          "speaker": "Ava",
+          "text": "Welcome back to Daily Standup for September 11th. The biggest story today is Northwind buying Harbor AI for 2.1 billion dollars in cash, its largest acquisition to date."
+        },
+        {
+          "speaker": "Ben",
+          "text": "Right, and the engine is the prize. Harbor's inference stack serves 40 million requests per day, and Northwind says it will fold that into Northwind Cloud over the next year."
+        },
+        {
+          "speaker": "Ava",
+          "text": "Why pay that much for inference? Is demand really outrunning what they already run?"
+        },
+        {
+          "speaker": "Ben",
+          "text": "It looks that way. Harbor employs 240 people, the deal closes in the fourth quarter, and chief executive Dana Whitfield framed it as a capacity bet, not an acqui-hire."
+        }
+      ]
+    },
+    {
+      "topic": "photonic-prototype",
+      "lines": [
+        {
+          "speaker": "Ava",
+          "text": "Next, a result from Lausanne that deserves the caveats up front. Walk me through the 512-qubit claim."
+        },
+        {
+          "speaker": "Ben",
+          "text": "The Lausanne Institute for Photonic Systems built a 512-qubit photonic processor that held coherence for 3.2 milliseconds at room temperature, up from their previous 128-qubit device."
+        },
+        {
+          "speaker": "Ava",
+          "text": "Published in Nature Physics, right? What did independent researchers make of it?"
+        },
+        {
+          "speaker": "Ben",
+          "text": "Priya Raman called the error-correction scheme promising but said scaling to thousands of qubits remains unproven. So, genuinely interesting physics, not yet a machine you would buy."
+        },
+        {
+          "speaker": "Ava",
+          "text": "What about Driftwood? The summary suggests a 45 million dollar Series B led by Meridian Ventures, but going off the writeup, we haven't seen the details on this one."
+        },
+        {
+          "speaker": "Ben",
+          "text": "That's the whole story so far. Logistics analytics, 45 million dollars, Meridian leading. Have a great rest of your day."
+        }
+      ]
+    }
+  ]
+}

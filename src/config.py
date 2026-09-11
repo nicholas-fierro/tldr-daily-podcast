@@ -155,6 +155,77 @@ TTS_SAMPLE_RATE = 24_000  # Gemini TTS returns 24kHz signed 16-bit mono PCM
 TTS_SAMPLE_WIDTH = 2
 TTS_CHANNELS = 1
 
+# --- listening evaluation (eval/score_script.py, offline, stdlib only) --------
+
+# Turn openers the script prompt forbids ("Avoid repetitive starts such as
+# ..."). Any turn whose first word is one of these counts as a repetition hit.
+EVAL_OPENER_TOKENS = ("and", "right", "exactly", "so", "well", "okay", "yeah")
+
+# Full marks when the opener-hit rate is at or under this; linear fall to zero
+# at EVAL_OPENER_CAP. A rare discourse "Right" is conversation, a habit is not.
+EVAL_OPENER_TOLERANCE = 0.05
+EVAL_OPENER_CAP = 0.30
+
+# Tokens that make a non-opening turn count as contingent on the prior turn:
+# explicit acknowledgement / agreement / contrast at the start of the turn.
+EVAL_CONTINGENCY_MARKERS = (
+    "yes", "yeah", "yep", "right", "exactly", "true", "fair", "sure",
+    "agreed", "absolutely", "definitely", "hmm", "oh", "wow", "huh",
+    "really", "no", "but", "however", "although", "though", "still",
+    "yet", "except", "actually", "wait", "hold",
+)
+
+# A turn this short with no other signal is a backchannel ("Got it",
+# "Makes sense") — contingent by form.
+EVAL_BACKCHANNEL_MAX_WORDS = 6
+
+# Audience-directed closing lines in the final segment. A real sign-off spans
+# more than the single last turn ("Thanks for listening." / "See you tomorrow."
+# / "Take care."), and those lines address the listener, not the prior turn, so
+# scoring them for contingency false-flags them. Any final-segment line whose
+# lower-cased text contains one of these phrases is exempted, as is the very
+# last line regardless of wording.
+EVAL_SIGNOFF_MARKERS = (
+    "thanks for listening", "thanks for tuning in", "thanks for joining",
+    "see you", "catch you", "until next time", "until tomorrow",
+    "that's all", "that is all", "that's it for", "that is it for",
+    "have a great", "have a good", "take care", "stay curious",
+    "we'll be back", "we will be back", "back tomorrow",
+)
+
+# Lower-cased words ignored when matching turns against each other: function
+# words and generic podcast filler that would otherwise fake lexical overlap
+# or read as named entities.
+EVAL_STOPWORDS = frozenset(
+    """
+    a about above after again against all almost also always among amount
+    analysis and another any anyone anything around because become been
+    before being below between big both brief bring but can company companys
+    could daily data day doesnt doing dont down during each even every few
+    first for from further get going good had has have having here however
+    into its itself just know large last launch later least like look made
+    major make manner many matter means might model more most much new news
+    next number over part place quite rather read really round same second
+    seems seen several should since small some something startup still such
+    take than that the their them then there these they thing think this
+    those through today under until using very want well went were what
+    when where which while with within without would year years youre your
+    across announced between chief corp during exec former half late major
+    monday tuesday wednesday thursday friday saturday sunday morning evening
+    today tonight week announced says reportedly giant unit announced
+    january february march april may june july august september october
+    november december
+    """.split()
+)
+
+# Titlecase tokens shorter than this are never checkable entities.
+EVAL_ENTITY_MIN_LEN = 4
+
+# Coefficient-of-variation target for sentence lengths. Real two-person talk
+# mixes short reactions with long explanations; monotone equal lengths read
+# as one voice. Full marks at or above the target.
+EVAL_SENTENCE_CV_TARGET = 0.55
+
 # --- audio ----------------------------------------------------------------
 
 SEGMENT_GAP_MS = 350
