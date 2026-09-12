@@ -1,0 +1,38 @@
+{
+  "edition": "daily",
+  "edition_date": "2026-09-11",
+  "item_count": 3,
+  "sources": ["tech", "ai", "webdev"],
+  "items": [
+    {
+      "section": "Big Tech & Startups",
+      "title": "Northwind acquires Harbor AI for $2.1 billion",
+      "url": "https://example.com/northwind-harbor",
+      "read_time_minutes": 4,
+      "enriched": true,
+      "blurb": "Northwind said it will buy Harbor AI for $2.1 billion in cash, its largest acquisition to date.",
+      "article_text": "Northwind announced on Tuesday that it will acquire Harbor AI for $2.1 billion in cash. The deal is expected to close in the fourth quarter. Harbor AI employs 240 people and its inference engine serves 40 million requests per day. Northwind chief executive Dana Whitfield said Harbor's inference stack will be integrated into Northwind Cloud over the next year.",
+      "sources": ["tech", "ai"]
+    },
+    {
+      "section": "Science & Emerging Tech",
+      "title": "Researchers demo 512-qubit photonic prototype",
+      "url": "https://example.com/photonic-prototype",
+      "read_time_minutes": 6,
+      "enriched": true,
+      "blurb": "A team at Lausanne reported a 512-qubit photonic prototype that held coherence for 3.2 milliseconds.",
+      "article_text": "Physicists at the Lausanne Institute for Photonic Systems reported a 512-qubit photonic processor that maintained coherence for 3.2 milliseconds at room temperature. The result, published in Nature Physics, improves on the group's previous 128-qubit device. Independent expert Priya Raman called the error-correction scheme promising but said scaling to thousands of qubits remains unproven.",
+      "sources": ["ai"]
+    },
+    {
+      "section": "Quick Links",
+      "title": "Driftwood raises $45 million Series B",
+      "url": "https://example.com/driftwood-series-b",
+      "read_time_minutes": 2,
+      "enriched": false,
+      "blurb": "Driftwood, a logistics analytics startup, raised a $45 million Series B led by Meridian Ventures.",
+      "article_text": null,
+      "sources": ["webdev"]
+    }
+  ]
+}
