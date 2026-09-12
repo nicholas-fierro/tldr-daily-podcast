@@ -136,6 +136,49 @@ alone without mid-sentence handoffs. Speaker must be exactly \
 "{config.HOST_A}" or "{config.HOST_B}"."""
 
 
+CRITIC_SYSTEM_PROMPT = f"""You edit a daily tech-news podcast: you revise the existing draft \
+of a two-host conversation between {config.HOST_A} and {config.HOST_B}. You are not writing \
+a new episode.
+
+The hosts are the same two people every day and the listener knows them.
+- {config.HOST_A} frames the day, asks the questions a smart non-specialist would ask, \
+and drives the running order.
+- {config.HOST_B} explains mechanism and context, supplies numbers, and says what is \
+actually new versus what is a rerun of an older story.
+
+WHAT YOU MAY CHANGE. Flow, concision, sentence-length variety. Turn-taking: make each \
+turn respond to the turn before it within the same segment. Remove repetitive turn \
+openers such as "And", "Right", and "Exactly". Cut flab and weak material outright.
+
+WHAT YOU MAY NOT CHANGE. This is the load-bearing rule: you may not add, sharpen, or \
+infer any fact — no number, name, date, quote, mechanism, motive, cause, or implication — \
+that is not already present in the SOURCE MATERIAL you are given. If the draft hedges an \
+item, keep the hedge. Items marked enriched=false were never read in full; their hedging \
+must survive revision. Deleting material is allowed; inventing connective tissue is not. \
+A duller true sentence beats a livelier false one.
+
+STRUCTURE. Keep the same stories in the same order and the same segment structure: \
+{config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments, \
+{config.WORD_TARGET_MIN}-{config.WORD_TARGET_MAX} words total. Do not add or drop a segment, \
+and do not move a story between segments.
+
+SEGMENTS STAND ALONE. Segments are voiced separately and stitched, so each must stand \
+alone: no reference to another segment, no mid-sentence handoff across a segment boundary.
+
+OPENING AND CLOSING. Keep the opening welcome and the closing sign-off intact in purpose. \
+Do not add calls to action or new claims in the sign-off.
+
+FORMATTING. No stage directions, no [laughs], no sound or music cues, no emoji, no \
+markdown, no URLs read aloud. Plain spoken sentences only — every character you write \
+will be read aloud.
+
+Return ONLY a JSON object, no prose around it, in exactly this shape:
+
+{{"segments": [{{"topic": "short-kebab-case-slug", "lines": [{{"speaker": "{config.HOST_A}", "text": "..."}}]}}]}}
+
+Speaker must be exactly "{config.HOST_A}" or "{config.HOST_B}"."""
+
+
 SCRIPT_JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -287,9 +330,9 @@ class OpenRouterScriptProvider:
             return self._post(client, system_prompt, user_prompt)
 
 
-def _default_script_provider() -> ScriptProvider:
+def _default_script_provider(model: str | None = None) -> ScriptProvider:
     if config.SCRIPT_PROVIDER == "openrouter":
-        return OpenRouterScriptProvider()
+        return OpenRouterScriptProvider(model=model)
     raise ScriptError(f"unsupported script provider: {config.SCRIPT_PROVIDER}")
 
 
@@ -333,6 +376,16 @@ def build_user_prompt(
     return f"{heading}\n\n{json.dumps(payload, indent=2, ensure_ascii=False)}"
 
 
+def build_critic_prompt(user_prompt: str, draft_json: str) -> str:
+    return (
+        "Revise the draft script below using only the source material. Do not "
+        "introduce any fact that is not already present in the source material "
+        "or the draft.\n\n"
+        f"SOURCE MATERIAL:\n{user_prompt}\n\n"
+        f"DRAFT SCRIPT JSON:\n{draft_json}"
+    )
+
+
 def _extract_json(raw: str) -> dict:
     """Models sometimes wrap JSON in a fence or a sentence. Recover both."""
     raw = raw.strip()
@@ -374,6 +427,75 @@ def parse_script_json(raw: str, date: str) -> Script:
     return Script(date=date, segments=segments)
 
 
+def _check_hard_limits(words: int, segment_count: int) -> None:
+    """Raise ScriptError when a candidate script falls outside the hard gates."""
+    if not (
+        config.WORD_HARD_MIN <= words <= config.WORD_HARD_MAX
+        and config.SCRIPT_SEGMENT_MIN <= segment_count <= config.SCRIPT_SEGMENT_MAX
+    ):
+        raise ScriptError(
+            f"script was {words} words across {segment_count} segments; hard limits "
+            f"are {config.WORD_HARD_MIN}-{config.WORD_HARD_MAX} words and "
+            f"{config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments"
+        )
+
+
+def revise_script(
+    draft: Script,
+    draft_json: str,
+    user_prompt: str,
+    date: str,
+    provider: ScriptProvider,
+) -> Script:
+    """Optional editorial pass over an already-valid draft. Never raises: any
+    failure returns the draft unchanged."""
+    draft_words = draft.word_count()
+    last_error: Exception | None = None
+    for attempt in range(1, config.SCRIPT_CRITIC_RETRIES + 2):
+        try:
+            start = time.monotonic()
+            generation = provider.generate(
+                CRITIC_SYSTEM_PROMPT,
+                build_critic_prompt(user_prompt, draft_json),
+            )
+            elapsed = time.monotonic() - start
+            if generation.cost_usd is None:
+                log.info(
+                    "critic model=%s tokens: in=%d out=%d elapsed=%.1fs",
+                    generation.model,
+                    generation.input_tokens,
+                    generation.output_tokens,
+                    elapsed,
+                )
+            else:
+                log.info(
+                    "critic model=%s tokens: in=%d out=%d cost=$%.6f elapsed=%.1fs",
+                    generation.model,
+                    generation.input_tokens,
+                    generation.output_tokens,
+                    generation.cost_usd,
+                    elapsed,
+                )
+
+            revised = parse_script_json(generation.text, date)
+            words = revised.word_count()
+            segment_count = len(revised.segments)
+            _check_hard_limits(words, segment_count)
+            log.info(
+                "critic: draft %d words -> revised %d words across %d segments",
+                draft_words,
+                words,
+                segment_count,
+            )
+            return revised
+        except Exception as exc:  # noqa: BLE001 - any critic failure keeps the draft
+            last_error = exc
+            log.warning("critic attempt %d failed: %s", attempt, exc)
+
+    log.warning("critic pass failed (%s); keeping the draft", last_error)
+    return draft
+
+
 def generate_script(
     items: list[Item],
     date: str,
@@ -383,6 +505,7 @@ def generate_script(
     sources: list[str] | None = None,
 ) -> Script:
     """Generate one script, retrying API and unusable-output failures."""
+    injected = provider is not None
     provider = provider or _default_script_provider()
     user_prompt = build_user_prompt(items, date, edition, sources)
     retry_correction = ""
@@ -390,24 +513,28 @@ def generate_script(
 
     for attempt in range(1, config.SCRIPT_RETRIES + 2):
         try:
+            start = time.monotonic()
             generation = provider.generate(
                 SYSTEM_PROMPT,
                 retry_correction or user_prompt,
             )
+            elapsed = time.monotonic() - start
             if generation.cost_usd is None:
                 log.info(
-                    "script model=%s tokens: in=%d out=%d",
+                    "script model=%s tokens: in=%d out=%d elapsed=%.1fs",
                     generation.model,
                     generation.input_tokens,
                     generation.output_tokens,
+                    elapsed,
                 )
             else:
                 log.info(
-                    "script model=%s tokens: in=%d out=%d cost=$%.6f",
+                    "script model=%s tokens: in=%d out=%d cost=$%.6f elapsed=%.1fs",
                     generation.model,
                     generation.input_tokens,
                     generation.output_tokens,
                     generation.cost_usd,
+                    elapsed,
                 )
 
             episode_script = parse_script_json(generation.text, date)
@@ -415,9 +542,9 @@ def generate_script(
             segment_count = len(episode_script.segments)
             log.info("script: %d words across %d segments", words, segment_count)
 
-            valid_length = config.WORD_HARD_MIN <= words <= config.WORD_HARD_MAX
-            valid_segments = config.SCRIPT_SEGMENT_MIN <= segment_count <= config.SCRIPT_SEGMENT_MAX
-            if not valid_length or not valid_segments:
+            try:
+                _check_hard_limits(words, segment_count)
+            except ScriptError:
                 target_words = (config.WORD_TARGET_MIN + config.WORD_TARGET_MAX) // 2
                 word_delta = target_words - words
                 direction = (
@@ -436,11 +563,7 @@ def generate_script(
                     "multiple segments. Return only corrected JSON.\n\n"
                     f"PREVIOUS JSON:\n{generation.text}"
                 )
-                raise ScriptError(
-                    f"script was {words} words across {segment_count} segments; hard limits "
-                    f"are {config.WORD_HARD_MIN}-{config.WORD_HARD_MAX} words and "
-                    f"{config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments"
-                )
+                raise
 
             if not config.WORD_TARGET_MIN <= words <= config.WORD_TARGET_MAX:
                 if config.WORD_ACCEPT_MIN <= words <= config.WORD_ACCEPT_MAX:
@@ -462,6 +585,11 @@ def generate_script(
                         config.WORD_ACCEPT_MAX,
                     )
 
+            if config.SCRIPT_CRITIC_ENABLED:
+                critic = provider if injected else _default_script_provider(config.SCRIPT_CRITIC_MODEL)
+                return revise_script(
+                    episode_script, generation.text, user_prompt, date, critic
+                )
             return episode_script
 
         except Exception as exc:  # noqa: BLE001 - retry API and malformed-output alike

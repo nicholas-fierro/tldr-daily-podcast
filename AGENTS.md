@@ -77,6 +77,14 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
   (`src/publish.py`) and email (`src/email_delivery.py`) are siblings. Everything
   upstream of them is shared and must stay delivery-agnostic — no `if args.email`
   reaching back into fetch, parse, enrich, script, or audio.
+- **The script stage is one model call by default.** `SCRIPT_CRITIC=true` adds
+  an optional second call — an editorial revision pass — *inside* the script
+  stage (Linear NFI-88, unadopted experiment). It must stay that way: the flag
+  defaults off, `generate_script` keeps its signature, and no other stage and
+  no workflow knows the critic exists. The critic receives the writer's full
+  grounded prompt and may cut but never add a fact, and any critic failure
+  degrades to the validated draft rather than failing the episode — it must
+  never raise. Do not make it the default without a real listen.
 - **Guards run before work, not after.** CI resolves the target date and
   restores the email marker before checkout; in the pipeline, the anchor edition
   alone clears the recency and idempotency checks *before* the rest of a bundle
@@ -87,7 +95,7 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 214 passing as of the current implementation
+pytest -q          # 241 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
@@ -137,6 +145,7 @@ python main.py --bundle daily --stage combine   # free; the combined running ord
 python main.py --stage parse              # free, no credentials
 python main.py --stage enrich             # free, no credentials
 python main.py --stage script             # OPENROUTER_API_KEY
+SCRIPT_CRITIC=true python main.py --stage script   # adds the critic pass; ~2x cost
 python main.py --stage audio --no-upload  # selected TTS provider + ffmpeg, MP3 to ./out
 python main.py --email                    # full run, emailed instead of published
 python main.py --date YYYY-MM-DD          # re-run a past edition
@@ -171,3 +180,11 @@ building on top of them.
   combined-briefing prompt needed no adjustment against four sources. Treat both
   as tuned — change them only with a real listen to justify it, not by reasoning
   about the item count.
+- **The critic pass is a prototype, not a decision.** `SCRIPT_CRITIC` is off by
+  default and no scheduled run has ever used it. It is offline-tested only;
+  whether it actually improves the show is an open question for the eval harness
+  and a real listen, and the earlier NFI-87 responsive-turn experiment is the
+  cautionary precedent — a plausible prompt change measured on one edition
+  produced no reliable benefit and was not adopted. Do not flip the default, add
+  it to the workflow, or cite it as adopted until a paired measurement and a
+  listen say so.
