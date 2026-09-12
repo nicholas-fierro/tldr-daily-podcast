@@ -82,9 +82,13 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
   stage (Linear NFI-88, unadopted experiment). It must stay that way: the flag
   defaults off, `generate_script` keeps its signature, and no other stage and
   no workflow knows the critic exists. The critic receives the writer's full
-  grounded prompt and may cut but never add a fact, and any critic failure
-  degrades to the validated draft rather than failing the episode — it must
-  never raise. Do not make it the default without a real listen.
+  grounded prompt, but **only to verify the draft** — every claim it keeps must
+  already be in the draft *and* supported by the source, so it cannot import a
+  detail the writer deliberately omitted. It must return the draft's exact
+  segment count: a count that merely satisfies the global gate would silently
+  drop a segment. Any critic failure degrades to the validated draft rather than
+  failing the episode — it must never raise. Do not make it the default without
+  a real listen.
 - **Guards run before work, not after.** CI resolves the target date and
   restores the email marker before checkout; in the pipeline, the anchor edition
   alone clears the recency and idempotency checks *before* the rest of a bundle
@@ -95,7 +99,7 @@ These are load-bearing. Breaking one is a design change, not a refactor — flag
 ## Testing
 
 ```sh
-pytest -q          # 241 passing as of the current implementation
+pytest -q          # 243 passing as of the current implementation
 ```
 
 - `tests/test_parse.py` is the highest-value test in the project. It runs against
