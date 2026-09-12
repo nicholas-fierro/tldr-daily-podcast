@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 214 passing][tests-shield]][tests-url]
+[![Tests: 241 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -141,7 +141,7 @@ One module per stage in `src/`, orchestrated by `main.py`:
 | `src/parse.py` | HTML → items. **Sponsor filtering lives here.** |
 | `src/combine.py` | Several editions of one date → one deduplicated, balanced running order |
 | `src/enrich.py` | Concurrent article fetch, readable-text extraction, paywall detection |
-| `src/script.py` | Items → OpenRouter → validated segmented dialogue JSON |
+| `src/script.py` | Items → OpenRouter → validated segmented dialogue JSON, plus an optional off-by-default critic pass |
 | `src/tts.py` | Segments → per-segment audio, with retry, behind a `TTSProvider` protocol |
 | `src/audio.py` | ffmpeg concat, silence padding, loudnorm, MP3, ID3 tags |
 | `src/publish.py` | R2 upload, feed rebuild, retention pruning |
@@ -217,7 +217,9 @@ win over it. In CI these are GitHub repository secrets.
 | `EMAIL_TO` | `--email` | Recipient. Comma-separated for several. |
 | `ALERT_WEBHOOK_URL` | CI alerting | Slack / Discord / ntfy |
 
-Optional overrides: `SCRIPT_MODEL`, `SCRIPT_PROVIDER`, `TTS_PROVIDER` (default
+Optional overrides: `SCRIPT_MODEL`, `SCRIPT_PROVIDER`, `SCRIPT_CRITIC` (default
+`false`; see [the critic pass](#the-critic-pass)), `SCRIPT_CRITIC_MODEL`
+(defaults to `SCRIPT_MODEL`), `TTS_PROVIDER` (default
 `gemini`; also supports `kokoro`), Gemini's `TTS_MODEL`, `TTS_VOICE_A`, and
 `TTS_VOICE_B`, Kokoro's `KOKORO_LANG_CODE`, `KOKORO_VOICE_A`,
 `KOKORO_VOICE_B`, and `KOKORO_SPEED`, plus `OPENROUTER_BASE_URL`, `SMTP_PORT`
@@ -286,6 +288,34 @@ TTS_PROVIDER=kokoro python main.py --stage audio --no-upload
 Kokoro runs locally, needs no API key, and synthesizes each dialogue line with
 its speaker voice. Gemini remains the default and renders each segment in one
 multi-speaker request.
+
+### The critic pass
+
+The script stage is one model call by default. `SCRIPT_CRITIC=true` adds a
+second, optional call inside the same stage: an editor that revises the
+accepted draft for flow, turn-taking, and concision. It is an experiment
+(Linear NFI-88), **off by default**, and not yet adopted.
+
+```sh
+SCRIPT_CRITIC=true python main.py --stage script     # two calls instead of one
+SCRIPT_CRITIC=true SCRIPT_CRITIC_MODEL=<other-model> python main.py --stage script
+```
+
+Two properties make it safe to leave in the tree:
+
+* **It receives the same grounded input the writer got** — blurbs, `enriched`
+  flags, and article text — alongside the draft JSON, and is told it may cut
+  but may not add, sharpen, or infer a fact. A revision pass that cannot see
+  the source is the highest-hallucination-risk design in this repo; this one
+  can see it.
+* **It can only improve an already-valid episode.** The draft is validated
+  first. Any critic failure — HTTP error, malformed JSON, unknown speaker,
+  word count or segment count outside the hard gates — logs a warning and
+  returns the draft unchanged. It never raises, so enabling it cannot fail an
+  episode that would otherwise have shipped.
+
+Enabling it roughly doubles script-stage token cost and latency. Both calls log
+their tokens, cost, and elapsed time, so the delta is readable from the run log.
 
 ### Delivery
 
@@ -397,6 +427,7 @@ say so if you do.
 | Content source | `tldr.tech/api/latest/<edition>` (public web) | No Gmail OAuth, no IMAP, no email parsing. Cleaner HTML than the email, and the redirect removes all date math. |
 | Audio generation | Pluggable `TTSProvider`; Gemini default, local Kokoro optional | Gemini preserves cross-speaker prosody; Kokoro removes API cost and credentials. Provider selection stays outside orchestration. |
 | Script generation | OpenRouter, `deepseek/deepseek-v3.2` | Cheap open-weight inference that runs from CI while preserving control over length, structure, tone, and structured output. |
+| Script stage shape | One call by default; an optional second critic call behind `SCRIPT_CRITIC` | One call is the shipping path and stays the default. The critic is an unadopted experiment that can only improve an already-valid draft, never replace the one-call design by accident. |
 | Orchestration | GitHub Actions | Free, built-in cron, secrets, logs, artifacts. No server to patch. |
 | Storage + delivery | Cloudflare R2 + private RSS | Effectively free at this volume, S3-compatible, no egress fees, any podcast app can subscribe. |
 | Workflow tools (n8n etc.) | **Not** for the core pipeline | Article fetching, retry logic, chunked TTS, and audio concat are code-shaped, not node-shaped. |
@@ -481,7 +512,7 @@ broke it — it's in the workflow artifacts and at
 <!-- STATUS -->
 ## Status
 
-The full pipeline is written and `pytest` is green at 191 tests. What has and
+The full pipeline is written and `pytest` is green at 241 tests. What has and
 hasn't been exercised against live services:
 
 | Stage | Live verification |
@@ -490,10 +521,10 @@ hasn't been exercised against live services:
 | Enrich | **Verified live** (2026-08-22) — 12/14 enriched (85.7%); 2 clean blurb fallbacks, 0 items lost |
 | Script | **Verified and owner-approved** (2026-08-22) — grounded 1,142-word script across 7 segments for $0.0077 |
 | Audio | **Gemini verified and owner-approved** (2026-08-22) — 7/7 segments rendered, 3.44 MB mono 64kbps MP3, heard end-to-end. Kokoro is fake-tested only. |
-| Publish (R2) | Feed generation and retention tested in isolation. **Never uploaded to R2.** |
+| Publish (R2) | **Verified live locally** (2026-09-08) — upload, metadata, feed rebuild, prune, and dedup state exercised against a real bucket, as recorded in `AGENTS.md`. |
 | Deliver (email) | **Verified live** (2026-08-23) — episode delivered end-to-end as an SMTP attachment |
 | Automate | **Verified live** (2026-08-27) — manual and scheduled runs exercised; GitHub later delayed/dropped cron events, motivating the external fallback design. |
-| Combine | **Verified live** (2026-08-28) — 4 sources requested for one date, fintech correctly reported as not published, 47 items merged to 28 balanced across tech/ai/webdev. Not yet exercised through script, audio, or delivery. |
+| Combine | **Verified live** (2026-08-28) — 4 sources requested for one date, fintech correctly reported as not published, 47 items merged to 28 balanced across tech/ai/webdev. **Heard end-to-end** (2026-09-08), with the four-source combined prompt and 28-item cap validated, as recorded in `AGENTS.md`. |
 
 Notes from those runs, worth carrying forward:
 
@@ -520,10 +551,11 @@ Notes from those runs, worth carrying forward:
       Kokoro without changing orchestration or audio assembly
 - [x] **One combined daily episode** — `--bundle daily` merges the day's Tech,
       AI, Web Dev, and Fintech editions into a single briefing
-- [ ] First live R2 upload and a feed that validates in a real podcast app
+- [x] First live R2 upload (2026-09-08)
+- [ ] Feed validated in a real podcast app
 - [ ] A full unattended week on the GitHub Actions schedule
-- [ ] A combined episode heard end-to-end — the 28-item cap and the combined
-      prompt have not yet been judged against a real listen
+- [x] A combined episode heard end-to-end — the 28-item cap and the combined
+      prompt validated by a real listen (2026-09-08)
 
 Explicitly **not** in scope: chapter markers, transcripts in the feed, per-item
 deep links beyond the description list, any web UI.
@@ -589,6 +621,6 @@ Project Link: [https://github.com/nicholas-fierro/tldr-daily-podcast](https://gi
 [workflow-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/actions/workflows/daily.yml
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue?style=for-the-badge
 [python-url]: https://www.python.org/
-[tests-shield]: https://img.shields.io/badge/tests-200%20passing-brightgreen?style=for-the-badge
+[tests-shield]: https://img.shields.io/badge/tests-241%20passing-brightgreen?style=for-the-badge
 [tests-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/tree/main/tests
 [python-badge]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white

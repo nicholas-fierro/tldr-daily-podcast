@@ -124,6 +124,14 @@ WORD_ACCEPT_MAX = 1_600
 WORD_HARD_MIN = 1_100
 WORD_HARD_MAX = 1_700
 
+# Optional editorial revision (critic) pass over the draft script (Linear
+# NFI-88). Off by default; this is an experiment. Enabling it roughly doubles
+# script-stage token cost and latency, and a failed critic pass degrades to
+# the draft rather than failing the episode.
+SCRIPT_CRITIC_ENABLED = os.environ.get("SCRIPT_CRITIC", "false").strip().lower() == "true"
+SCRIPT_CRITIC_MODEL = os.environ.get("SCRIPT_CRITIC_MODEL", "").strip() or SCRIPT_MODEL
+SCRIPT_CRITIC_RETRIES = 1  # fewer than the writer: failure is cheap, we keep the draft
+
 # --- tts ------------------------------------------------------------------
 
 TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "gemini").strip().lower()

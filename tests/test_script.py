@@ -350,3 +350,183 @@ def test_single_edition_prompt_is_unchanged():
     payload = json.loads(prompt.split("\n\n", 1)[1])
     assert "sources" not in payload
     assert "sources" not in payload["items"][0]
+
+
+# --- critic pass ------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def critic_disabled(monkeypatch):
+    """Critic off unless a test opts in; keeps the suite hermetic under ambient env."""
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", False)
+
+
+def make_segments_json(segment_count, words_per_segment, topic_prefix="topic"):
+    segments = [
+        {
+            "topic": f"{topic_prefix}-{index}",
+            "lines": [
+                {
+                    "speaker": config.HOST_A,
+                    "text": " ".join(["word"] * words_per_segment),
+                }
+            ],
+        }
+        for index in range(segment_count)
+    ]
+    return json.dumps({"segments": segments})
+
+
+def valid_draft_text():
+    segment_count = config.SCRIPT_SEGMENT_MIN
+    words_per_segment = config.WORD_TARGET_MIN // segment_count
+    return make_segments_json(segment_count, words_per_segment)
+
+
+class RecordingProvider:
+    def __init__(self, texts):
+        self.texts = texts
+        self.calls = []
+
+    def generate(self, system_prompt: str, user_prompt: str) -> script.ScriptGeneration:
+        self.calls.append((system_prompt, user_prompt))
+        index = min(len(self.calls) - 1, len(self.texts) - 1)
+        return script.ScriptGeneration(text=self.texts[index], model="test/model")
+
+
+def test_critic_disabled_calls_provider_once():
+    provider = RecordingProvider([valid_draft_text()])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert len(provider.calls) == 1
+    assert provider.calls[0][0] == script.SYSTEM_PROMPT
+    assert generated.word_count() == config.WORD_TARGET_MIN
+
+
+def test_critic_enabled_revises_the_draft(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft = valid_draft_text()
+    revised = make_segments_json(config.SCRIPT_SEGMENT_MIN,
+                                 config.WORD_TARGET_MIN // config.SCRIPT_SEGMENT_MIN,
+                                 topic_prefix="revised")
+    provider = RecordingProvider([draft, revised])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert len(provider.calls) == 2
+    assert provider.calls[0][0] == script.SYSTEM_PROMPT
+    assert provider.calls[1][0] == script.CRITIC_SYSTEM_PROMPT
+    assert generated.segments[0].topic == "revised-0"
+
+
+def test_critic_prompt_carries_source_material_and_draft(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft = valid_draft_text()
+    provider = RecordingProvider([draft, draft])
+    script.generate_script(items(), "2026-08-20", provider=provider)
+    critic_user_prompt = provider.calls[1][1]
+    assert "The full article text, at length." in critic_user_prompt
+    assert "Only the blurb." in critic_user_prompt
+    assert '"enriched": false' in critic_user_prompt
+    assert draft in critic_user_prompt
+
+
+def test_critic_system_prompt_states_the_hard_constraints():
+    prompt = script.CRITIC_SYSTEM_PROMPT
+    assert "may not add, sharpen, or infer any fact" in prompt
+    assert "enriched=false" in prompt
+    assert "no reference to another segment" in prompt
+    assert "no mid-sentence handoff" in prompt
+    assert str(config.SCRIPT_SEGMENT_MIN) in prompt
+    assert str(config.WORD_TARGET_MIN) in prompt
+    assert config.HOST_A in prompt and config.HOST_B in prompt
+
+
+def test_critic_exception_keeps_the_draft(monkeypatch, caplog):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+
+    class FailingCritic(RecordingProvider):
+        def generate(self, system_prompt: str, user_prompt: str):
+            self.calls.append((system_prompt, user_prompt))
+            if system_prompt == script.CRITIC_SYSTEM_PROMPT:
+                raise RuntimeError("boom")
+            return script.ScriptGeneration(text=self.texts[0], model="test/model")
+
+    draft = valid_draft_text()
+    provider = FailingCritic([draft])
+    with caplog.at_level("WARNING"):
+        generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert len(provider.calls) == 1 + config.SCRIPT_CRITIC_RETRIES + 1
+    assert generated.word_count() == config.WORD_TARGET_MIN
+    assert "critic" in caplog.text.lower()
+
+
+def test_critic_malformed_json_keeps_the_draft(monkeypatch, caplog):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft = valid_draft_text()
+    provider = RecordingProvider([draft, "not json at all"])
+    with caplog.at_level("WARNING"):
+        generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert generated.word_count() == config.WORD_TARGET_MIN
+    assert "critic" in caplog.text.lower()
+
+
+def test_critic_outside_hard_word_limits_keeps_the_draft(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft = valid_draft_text()
+    too_long = make_segments_json(config.SCRIPT_SEGMENT_MIN,
+                                  config.WORD_HARD_MAX // config.SCRIPT_SEGMENT_MIN + 100)
+    provider = RecordingProvider([draft, too_long])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert generated.word_count() == config.WORD_TARGET_MIN
+
+
+def test_critic_outside_segment_range_keeps_the_draft(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft = valid_draft_text()
+    bad_count = config.SCRIPT_SEGMENT_MAX + 1
+    wrong_segments = make_segments_json(bad_count,
+                                        config.WORD_HARD_MAX // bad_count + 100)
+    provider = RecordingProvider([draft, wrong_segments])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert generated.word_count() == config.WORD_TARGET_MIN
+
+
+def test_critic_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_RETRIES", 1)
+    draft = valid_draft_text()
+    revised = make_segments_json(config.SCRIPT_SEGMENT_MIN,
+                                 config.WORD_TARGET_MIN // config.SCRIPT_SEGMENT_MIN,
+                                 topic_prefix="revised")
+
+    class FlakyCritic(RecordingProvider):
+        def generate(self, system_prompt: str, user_prompt: str):
+            self.calls.append((system_prompt, user_prompt))
+            if system_prompt == script.CRITIC_SYSTEM_PROMPT and len(
+                [c for c in self.calls if c[0] == script.CRITIC_SYSTEM_PROMPT]
+            ) == 1:
+                raise RuntimeError("transient")
+            index = 0 if system_prompt == script.SYSTEM_PROMPT else 1
+            return script.ScriptGeneration(text=[draft, revised][index], model="test/model")
+
+    provider = FlakyCritic([])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    critic_calls = [c for c in provider.calls if c[0] == script.CRITIC_SYSTEM_PROMPT]
+    assert len(critic_calls) == 2
+    assert generated.segments[0].topic == "revised-0"
+
+
+def test_writer_retry_still_repairs_before_critic(monkeypatch):
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    monkeypatch.setattr(script.time, "sleep", lambda seconds: None)
+    segment_count = config.SCRIPT_SEGMENT_MIN
+    repaired = make_segments_json(segment_count,
+                                  config.WORD_TARGET_MIN // segment_count,
+                                  topic_prefix="repaired")
+    revised = make_segments_json(segment_count,
+                                 config.WORD_TARGET_MIN // segment_count,
+                                 topic_prefix="revised")
+    provider = RecordingProvider([VALID, repaired, revised])
+    generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert len(provider.calls) == 3
+    assert "Revise the previous podcast JSON" in provider.calls[1][1]
+    assert provider.calls[2][0] == script.CRITIC_SYSTEM_PROMPT
+    assert repaired in provider.calls[2][1]
+    assert generated.segments[0].topic == "revised-0"
