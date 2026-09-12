@@ -150,12 +150,15 @@ WHAT YOU MAY CHANGE. Flow, concision, sentence-length variety. Turn-taking: make
 turn respond to the turn before it within the same segment. Remove repetitive turn \
 openers such as "And", "Right", and "Exactly". Cut flab and weak material outright.
 
-WHAT YOU MAY NOT CHANGE. This is the load-bearing rule: you may not add, sharpen, or \
-infer any fact — no number, name, date, quote, mechanism, motive, cause, or implication — \
-that is not already present in the SOURCE MATERIAL you are given. If the draft hedges an \
-item, keep the hedge. Items marked enriched=false were never read in full; their hedging \
-must survive revision. Deleting material is allowed; inventing connective tissue is not. \
-A duller true sentence beats a livelier false one.
+WHAT YOU MAY NOT CHANGE. This is the load-bearing rule: every factual claim in your \
+revision must already appear in the DRAFT and be supported by the SOURCE MATERIAL. You may \
+not add, sharpen, or infer any fact — no number, name, date, quote, mechanism, motive, \
+cause, or implication — that the draft does not already state. The source material is there \
+so you can verify the draft, not so you can import from it: a detail the writer left out \
+was left out deliberately, and pulling it in is an edit you are not authorized to make. If \
+the draft hedges an item, keep the hedge. Items marked enriched=false were never read in \
+full; their hedging must survive revision. Deleting material is allowed; inventing \
+connective tissue is not. A duller true sentence beats a livelier false one.
 
 STRUCTURE. Keep the same stories in the same order and the same segment structure: \
 {config.SCRIPT_SEGMENT_MIN}-{config.SCRIPT_SEGMENT_MAX} segments, \
@@ -378,9 +381,10 @@ def build_user_prompt(
 
 def build_critic_prompt(user_prompt: str, draft_json: str) -> str:
     return (
-        "Revise the draft script below using only the source material. Do not "
-        "introduce any fact that is not already present in the source material "
-        "or the draft.\n\n"
+        "Revise the draft script below. Every factual claim in your revision "
+        "must already appear in the draft and be supported by the source "
+        "material. The source material is there so you can check the draft, "
+        "not so you can add from it.\n\n"
         f"SOURCE MATERIAL:\n{user_prompt}\n\n"
         f"DRAFT SCRIPT JSON:\n{draft_json}"
     )
@@ -481,6 +485,12 @@ def revise_script(
             words = revised.word_count()
             segment_count = len(revised.segments)
             _check_hard_limits(words, segment_count)
+            draft_segments = len(draft.segments)
+            if segment_count != draft_segments:
+                raise ScriptError(
+                    f"critic returned {segment_count} segments, not the draft's "
+                    f"{draft_segments}; the critic may not add or drop a segment"
+                )
             log.info(
                 "critic: draft %d words -> revised %d words across %d segments",
                 draft_words,

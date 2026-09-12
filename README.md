@@ -3,7 +3,7 @@
 <!-- PROJECT SHIELDS -->
 [![Daily Episode Workflow][workflow-shield]][workflow-url]
 [![Python 3.11+][python-shield]][python-url]
-[![Tests: 241 passing][tests-shield]][tests-url]
+[![Tests: 243 passing][tests-shield]][tests-url]
 
 <!-- PROJECT LOGO -->
 <br />
@@ -304,15 +304,17 @@ SCRIPT_CRITIC=true SCRIPT_CRITIC_MODEL=<other-model> python main.py --stage scri
 Two properties make it safe to leave in the tree:
 
 * **It receives the same grounded input the writer got** — blurbs, `enriched`
-  flags, and article text — alongside the draft JSON, and is told it may cut
-  but may not add, sharpen, or infer a fact. A revision pass that cannot see
-  the source is the highest-hallucination-risk design in this repo; this one
-  can see it.
+  flags, and article text — alongside the draft JSON. A revision pass that
+  cannot see the source is the highest-hallucination-risk design in this repo;
+  this one can see it. The source is there to *verify* the draft, not to add
+  to it: every factual claim in a revision must already appear in the draft
+  **and** be supported by the source, so a detail the writer deliberately left
+  out cannot be imported by the editor.
 * **It can only improve an already-valid episode.** The draft is validated
   first. Any critic failure — HTTP error, malformed JSON, unknown speaker,
-  word count or segment count outside the hard gates — logs a warning and
-  returns the draft unchanged. It never raises, so enabling it cannot fail an
-  episode that would otherwise have shipped.
+  word count outside the hard gates, or a segment count that differs from the
+  draft's — logs a warning and returns the draft unchanged. It never raises, so
+  enabling it cannot fail an episode that would otherwise have shipped.
 
 Enabling it roughly doubles script-stage token cost and latency. Both calls log
 their tokens, cost, and elapsed time, so the delta is readable from the run log.
@@ -512,7 +514,7 @@ broke it — it's in the workflow artifacts and at
 <!-- STATUS -->
 ## Status
 
-The full pipeline is written and `pytest` is green at 241 tests. What has and
+The full pipeline is written and `pytest` is green at 243 tests. What has and
 hasn't been exercised against live services:
 
 | Stage | Live verification |
@@ -621,6 +623,6 @@ Project Link: [https://github.com/nicholas-fierro/tldr-daily-podcast](https://gi
 [workflow-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/actions/workflows/daily.yml
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue?style=for-the-badge
 [python-url]: https://www.python.org/
-[tests-shield]: https://img.shields.io/badge/tests-241%20passing-brightgreen?style=for-the-badge
+[tests-shield]: https://img.shields.io/badge/tests-243%20passing-brightgreen?style=for-the-badge
 [tests-url]: https://github.com/nicholas-fierro/tldr-daily-podcast/tree/main/tests
 [python-badge]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white

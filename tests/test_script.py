@@ -438,6 +438,16 @@ def test_critic_system_prompt_states_the_hard_constraints():
     assert config.HOST_A in prompt and config.HOST_B in prompt
 
 
+def test_critic_may_not_import_facts_the_draft_omitted():
+    """Source material is for verifying the draft, not for adding to it."""
+    prompt = script.CRITIC_SYSTEM_PROMPT
+    assert "must already appear in the DRAFT" in prompt
+    assert "not so you can import from it" in prompt
+    user_prompt = script.build_critic_prompt("SOURCE", "DRAFT")
+    assert "must already appear in the draft" in user_prompt
+    assert "not so you can add from it" in user_prompt
+
+
 def test_critic_exception_keeps_the_draft(monkeypatch, caplog):
     monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
 
@@ -475,6 +485,24 @@ def test_critic_outside_hard_word_limits_keeps_the_draft(monkeypatch):
     provider = RecordingProvider([draft, too_long])
     generated = script.generate_script(items(), "2026-08-20", provider=provider)
     assert generated.word_count() == config.WORD_TARGET_MIN
+
+
+def test_critic_dropping_a_segment_keeps_the_draft(monkeypatch, caplog):
+    """A count still inside the global gate is a dropped segment, not a valid revision."""
+    monkeypatch.setattr(config, "SCRIPT_CRITIC_ENABLED", True)
+    draft_segments = config.SCRIPT_SEGMENT_MAX
+    fewer = config.SCRIPT_SEGMENT_MIN
+    assert config.SCRIPT_SEGMENT_MIN <= fewer < draft_segments
+    draft = make_segments_json(draft_segments,
+                               config.WORD_TARGET_MIN // draft_segments)
+    dropped = make_segments_json(fewer, config.WORD_TARGET_MIN // fewer,
+                                 topic_prefix="dropped")
+    provider = RecordingProvider([draft, dropped])
+    with caplog.at_level("WARNING"):
+        generated = script.generate_script(items(), "2026-08-20", provider=provider)
+    assert len(generated.segments) == draft_segments
+    assert generated.segments[0].topic == "topic-0"
+    assert "may not add or drop a segment" in caplog.text
 
 
 def test_critic_outside_segment_range_keeps_the_draft(monkeypatch):
